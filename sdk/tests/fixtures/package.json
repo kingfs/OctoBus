@@ -1,0 +1,8 @@
+{
+  "name": "calculator-fixture",
+  "version": "9.9.9",
+  "type": "module",
+  "bin": {
+    "calculator": "calculator-handler.js"
+  }
+}

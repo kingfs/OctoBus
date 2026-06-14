@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "label": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": true
+}

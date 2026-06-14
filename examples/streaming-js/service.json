@@ -1,0 +1,12 @@
+{
+  "schema": "chaitin.octobus.service.v1",
+  "name": "streaming",
+  "displayName": "Streaming JS",
+  "description": "JavaScript service with unary, server streaming, client streaming, and bidirectional streaming methods.",
+  "proto": {
+    "roots": ["proto"],
+    "files": ["proto/streaming.proto"]
+  },
+  "configSchema": "config.schema.json",
+  "secretSchema": "secret.schema.json"
+}
