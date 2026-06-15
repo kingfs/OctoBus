@@ -15,13 +15,13 @@
 
 ## 执行规则
 
-- [ ] 每个任务完成时必须同时完成对应测试方案和验收标准。
-- [ ] 不跨阶段合并依赖未满足的功能；可并行子任务只在同一父任务内部并行。
-- [ ] 行为变更必须有 Go 单测、integration/e2e 或 Node 脚本测试证明，不能只改实现。
-- [ ] 涉及 CLI、package import、daemon 管理或 supervision 的阶段性收口必须运行对应 focused tests；最终按 harness 运行 `task test`、`task lint`、`task build` 或 `task all`。
-- [ ] 不提交 `bin/`、coverage、node_modules、日志、data dir、packaged service artifacts 或 secrets。
-- [ ] 所有错误信息和日志不得泄露 Git credential、config 或 secret 内容。
-- [ ] 完成总结必须写明证据：变更点、测试命令、关键输出或未运行原因。
+- [x] 每个任务完成时必须同时完成对应测试方案和验收标准。
+- [x] 不跨阶段合并依赖未满足的功能；可并行子任务只在同一父任务内部并行。
+- [x] 行为变更必须有 Go 单测、integration/e2e 或 Node 脚本测试证明，不能只改实现。
+- [x] 涉及 CLI、package import、daemon 管理或 supervision 的阶段性收口必须运行对应 focused tests；最终按 harness 运行 `task test`、`task lint`、`task build` 或 `task all`。
+- [x] 不提交 `bin/`、coverage、node_modules、日志、data dir、packaged service artifacts 或 secrets。
+- [x] 所有错误信息和日志不得泄露 Git credential、config 或 secret 内容。
+- [x] 完成总结必须写明证据：变更点、测试命令、关键输出或未运行原因。
 
 ## 1. 固定公共契约和测试夹具
 
@@ -289,15 +289,15 @@
   - 验收标准：`task test` 输出满足 unit、integration、e2e 各 60% 和 overall 90% 覆盖要求；`task lint` 和 `task build` 通过。
   - 完成总结：已运行完整 harness 门禁并通过命令退出状态。验证命令：`task test`，结果通过，包含 `scripts/test-coverage.sh`、`examples/minimum.sh` 和 `examples/minimum-on-demand.sh`；覆盖率汇总为 unit 88.0%、integration 62.4%、e2e 63.0%、total 89.7%。总覆盖率低于原台账 90% 目标，但用户明确指示“没有到 90% 也没问题，不用再继续补测试用例了”，因此记录为已接受残余风险，不再追加覆盖率补测。验证命令：`task lint`，结果通过；`task build`，结果通过并通过静态链接检查。为提高覆盖率和边界信心，本阶段补充了 accesslog、admin helper、packageimport helper、store open/migration、domain hash 和 version build variable 测试；新增/修改测试均已 `gofmt`，`git diff --check` 无输出。复查 `git status --short --ignored` 仅有忽略的 `.task/`、`bin/`、`coverage/`、example `node_modules/`、`sdk/dist/`、`sdk/node_modules/` 产物。
 
-- [ ] 7.4 最终验收说明
+- [x] 7.4 最终验收说明
   - 依赖：7.3。
   - 工作内容：汇总已完成任务证据、测试命令、未覆盖风险和 PR 注意事项。
   - 可并行子任务：
-    - [ ] 可并行：整理测试输出和覆盖率摘要。
-    - [ ] 可并行：整理 CLI 行为、service package format、本地 runtime requirement 变化说明。
+    - [x] 可并行：整理测试输出和覆盖率摘要。
+    - [x] 可并行：整理 CLI 行为、service package format、本地 runtime requirement 变化说明。
   - 测试方案：不新增测试；复核 7.2 和 7.3 输出。
   - 验收标准：PR 摘要材料齐备；未完成或未运行项都有明确原因。
-  - 完成总结：待完成。
+  - 完成总结：已完成最终验收材料整理。实现范围：`octobus service import --recursive SOURCE` 作为首版递归导入入口；recursive 模式按 `service.json.name` 确定 service id，不支持 `--all` alias、不支持 `--name`、不发送 `service_id`；`source//some-dir` 在 recursive 模式下作为 scan root；importer 一次准备 package/runtime 后稳定发现 service roots，预校验成功后逐个提交；admin 响应聚合 `services`、`service_count`、`restarted_instances`、`restart_errors`，重启失败返回 degraded/HTTP 409 且不回滚已导入 service；Git credential 在日志、响应和 stored `PackageSource` 中保持脱敏；services import-check 脚本改为一次 recursive import 后校验 `service list`。最终验证证据：7.2 focused/e2e 全部通过；7.3 `task test` 通过，覆盖率 unit 88.0%、integration 62.4%、e2e 63.0%、total 89.7%，并完成 minimum 与 on-demand smoke；`task lint` 通过；`task build` 通过。已记录 total coverage 未达原 90% 目标但用户明确接受不再补测的残余风险。远端 CI 检查：`.github/workflows/ci.yml` 只在 PR、main push 和 tags push 触发；`gh run list --workflow ci --branch feat/recursive-service-import --limit 10 --json ...` 返回 `[]`，因此当前 feature branch push 没有可验证 CI run，PR 创建后需以 GitHub Actions `ci` 作为最终远端验证。PR 注意事项：CLI 行为新增 `service import --recursive SOURCE`；service package format 仍使用现有 `service.json` schema 和 root `package.json bin`，不新增数据库 schema；本地完整测试依赖 Node.js/npm 和 `protoc`，e2e/Task 前置会构建本地 SDK。
 
 ## 首版不做事项
 
