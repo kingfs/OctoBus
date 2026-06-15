@@ -355,6 +355,9 @@ func TestAdminRecursiveServiceImportAggregatesResponse(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := st.UpsertInstance(ctx, domain.Instance{ID: "beta-enabled", ServiceID: "beta-service", Name: "Beta Enabled", Enabled: true, Status: domain.StatusStopped, NodeEntry: "bin/beta-service.js", ConfigJSON: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
 	source := "npm:@chaitin-ai/octobus-tentacles"
 	srv := &Server{
 		Store:      st,
@@ -386,6 +389,45 @@ func TestAdminRecursiveServiceImportAggregatesResponse(t *testing.T) {
 		if got.RestartErrors[id] == nil || len(got.RestartErrors[id]) != 0 {
 			t.Fatalf("restart_errors[%s]=%v", id, got.RestartErrors[id])
 		}
+	}
+}
+
+func TestAdminRecursiveServiceImportDegradedOnRestartFailure(t *testing.T) {
+	ctx := context.Background()
+	dataDir := t.TempDir()
+	st, err := store.Open(filepath.Join(dataDir, "octobus.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	service := domain.Service{ID: "alpha-service", Name: "Alpha", PackageSource: "fixture//alpha", PackageArtifactPath: "pkg-alpha", PackageSHA256: "pkgsha-alpha", DescriptorPath: "desc-alpha", DescriptorSHA256: "descsha-alpha", DescriptorVersion: "descsha-alpha", NodeEntry: "bin/alpha-service.js", RuntimeMode: domain.RuntimeModeLongRunning}
+	if err := st.UpsertService(ctx, service); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertInstance(ctx, domain.Instance{ID: "alpha-enabled", ServiceID: "alpha-service", Name: "Alpha Enabled", Enabled: true, Status: domain.StatusStopped, NodeEntry: "bin/alpha-service.js", ConfigJSON: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{
+		Store:      st,
+		Supervisor: supervisor.New(dataDir, st),
+		Importer: fakeServiceImporter{importRecursiveFn: func(ctx context.Context, opts packageimport.Options) (packageimport.RecursiveResult, error) {
+			return packageimport.RecursiveResult{Services: []domain.Service{service}, ServiceCount: 1}, nil
+		}},
+	}
+	body := serveAdmin(t, srv, http.MethodPost, "/admin/v1/services/import", bytes.NewBufferString(`{"recursive":true,"source":"npm:fixture","offline":true,"build":"never"}`), http.StatusConflict)
+	var got struct {
+		Status             string              `json:"status"`
+		RestartedInstances map[string][]string `json:"restarted_instances"`
+		RestartErrors      map[string][]string `json:"restart_errors"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "degraded" || len(got.RestartErrors["alpha-service"]) == 0 {
+		t.Fatalf("unexpected degraded response: %+v body=%s", got, body)
+	}
+	if len(got.RestartedInstances["alpha-service"]) != 0 {
+		t.Fatalf("unexpected restarted instances: %+v", got.RestartedInstances)
 	}
 }
 

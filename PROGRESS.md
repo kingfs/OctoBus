@@ -153,16 +153,16 @@
   - 验收标准：recursive 请求调用 `ImportRecursive`；非法组合返回 HTTP 400；单 service import 原测试通过。
   - 完成总结：`handleServiceImport` 已按 `req.Recursive` 分流，recursive 请求校验 `source` 必填、`service_id` 为空、`name` 为空，合法请求调用 `Importer.ImportRecursive`；单 service 请求继续调用 `Importer.Import`，响应 shape 和重启路径保持兼容。相关实现和测试在 1.3 骨架接入时已落地，本阶段在真实 `ImportRecursive` 完成后重新验证。验证命令：`go test ./internal/admin`，结果通过。
 
-- [ ] 4.2 聚合 recursive 重启结果
+- [x] 4.2 聚合 recursive 重启结果
   - 依赖：4.1。
   - 工作内容：对 recursive 结果中的每个 service 调用 `restartEnabledServiceInstances`，按 service id 聚合 `restarted_instances` 和 `restart_errors`；任一重启失败时返回 HTTP 409 和 `status:"degraded"`。
   - 可并行子任务：
-    - [ ] 可并行：成功重启聚合响应测试。
-    - [ ] 可并行：重启失败 degraded 响应测试。
-    - [ ] 可并行：on-demand service 不重启测试。
+    - [x] 可并行：成功重启聚合响应测试。
+    - [x] 可并行：重启失败 degraded 响应测试。
+    - [x] 可并行：on-demand service 不重启测试。
   - 测试方案：`go test ./internal/admin`。
   - 验收标准：recursive 响应 JSON 符合 spec；重启失败不回滚已导入 service。
-  - 完成总结：待完成。
+  - 完成总结：recursive import 响应已按 service id 聚合 `restarted_instances` 和 `restart_errors`；成功路径测试覆盖多个 service 的聚合响应，并新增 enabled on-demand instance 断言其不会触发重启且返回空重启结果。新增 `TestAdminRecursiveServiceImportDegradedOnRestartFailure` 覆盖 long-running enabled instance 重启失败时返回 HTTP 409、`status:"degraded"`，并在对应 service id 下聚合 restart error。验证命令：`go test ./internal/admin`，结果通过。
 
 - [ ] 4.3 审计日志和敏感信息
   - 依赖：4.1、4.2。
