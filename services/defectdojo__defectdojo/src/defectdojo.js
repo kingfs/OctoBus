@@ -146,14 +146,22 @@ const parseHeaders = (value) => {
   return {};
 };
 
-const buildTlsOptions = (bindings = {}) => {
-  const enabled = Boolean(bindings.skipTlsVerify || bindings.tlsInsecureSkipVerify || bindings.insecureSkipVerify);
-  if (!enabled) return {};
-  return {
-    skipTlsVerify: true,
-    tlsInsecureSkipVerify: true,
-    insecureSkipVerify: true,
-  };
+const tlsSkipRequested = (bindings = {}) => (
+  Boolean(bindings.skipTlsVerify || bindings.tlsInsecureSkipVerify || bindings.insecureSkipVerify)
+);
+
+const assertSupportedTlsConfig = (bindings = {}) => {
+  if (!tlsSkipRequested(bindings)) return;
+  throw errorWithCode(
+    'INVALID_ARGUMENT',
+    'skipTlsVerify is not supported by this service; use a trusted TLS certificate for the DefectDojo endpoint',
+  );
+};
+
+const makeTimeoutSignal = (timeoutMs) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  return { signal: controller.signal, clear: () => clearTimeout(timeoutId) };
 };
 
 const requireBaseUrl = (ctx = {}) => {
@@ -274,14 +282,14 @@ const buildRequestHeaders = (ctx = {}) => ({
 
 const fetchUpstream = async (url, ctx = {}) => {
   const bindings = ctx.bindings || {};
-  const timeoutMs = resolveTimeoutMs(ctx);
+  assertSupportedTlsConfig(bindings);
+  const timeout = makeTimeoutSignal(resolveTimeoutMs(ctx));
   let res;
   try {
     res = await fetch(url, {
       method: 'GET',
       headers: buildRequestHeaders(ctx),
-      timeoutMs,
-      ...buildTlsOptions(bindings),
+      signal: timeout.signal,
     });
   } catch (err) {
     throwStructuredError('UNAVAILABLE', 'defectdojo upstream request failed', {
@@ -289,6 +297,8 @@ const fetchUpstream = async (url, ctx = {}) => {
       rawBody: '',
       reason: err?.cause?.message || err?.message || 'fetch failed',
     });
+  } finally {
+    timeout.clear();
   }
 
   const httpStatus = Number(res?.status || 0);
@@ -307,7 +317,8 @@ const fetchUpstream = async (url, ctx = {}) => {
 
 const postMultipartUpstream = async (url, ctx = {}, fields = {}, file = {}) => {
   const bindings = ctx.bindings || {};
-  const timeoutMs = resolveTimeoutMs(ctx);
+  assertSupportedTlsConfig(bindings);
+  const timeout = makeTimeoutSignal(resolveTimeoutMs(ctx));
   const { body, boundary } = buildMultipartBody(fields, file);
   let res;
   try {
@@ -318,8 +329,7 @@ const postMultipartUpstream = async (url, ctx = {}, fields = {}, file = {}) => {
         'content-type': `multipart/form-data; boundary=${boundary}`,
       },
       body,
-      timeoutMs,
-      ...buildTlsOptions(bindings),
+      signal: timeout.signal,
     });
   } catch (err) {
     throwStructuredError('UNAVAILABLE', 'defectdojo upstream request failed', {
@@ -327,6 +337,8 @@ const postMultipartUpstream = async (url, ctx = {}, fields = {}, file = {}) => {
       rawBody: '',
       reason: err?.cause?.message || err?.message || 'fetch failed',
     });
+  } finally {
+    timeout.clear();
   }
 
   const httpStatus = Number(res?.status || 0);
@@ -534,9 +546,9 @@ export const handlers = {
 };
 
 export const _test = {
+  assertSupportedTlsConfig,
   buildRequestHeaders,
   buildMultipartBody,
-  buildTlsOptions,
   buildUrl,
   boolField,
   commonPagingQuery,

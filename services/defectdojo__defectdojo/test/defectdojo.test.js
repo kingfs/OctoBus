@@ -58,6 +58,10 @@ test('helpers normalize bindings, scalars, booleans, query strings, and headers'
   assert.equal(_test.boolField({ value: true }), 'true');
   assert.equal(_test.boolField('0'), 'false');
   assert.equal(_test.boolField('bad'), undefined);
+  assert.throws(
+    () => _test.assertSupportedTlsConfig({ skipTlsVerify: true }),
+    /skipTlsVerify is not supported/,
+  );
   const multipart = _test.buildMultipartBody(
     { scan_type: 'ZAP Scan', active: 'true', empty: '' },
     { name: 'zap.xml', content: '<xml />', contentType: 'application/xml' },
@@ -94,8 +98,6 @@ test('ListProducts forwards filters and maps paginated response', async () => {
     limit: { value: 50 },
     offset: { value: 10 },
     name_contains: 'demo',
-  }, {
-    bindings: { skipTlsVerify: true },
   });
   const res = await handler();
 
@@ -103,7 +105,10 @@ test('ListProducts forwards filters and maps paginated response', async () => {
   assert.equal(captured.init.method, 'GET');
   assert.equal(captured.init.headers.Authorization, 'Token secret-token');
   assert.equal(captured.init.headers['X-Test'], 'yes');
-  assert.equal(captured.init.insecureSkipVerify, true);
+  assert.equal(Object.hasOwn(captured.init, 'timeoutMs'), false);
+  assert.equal(Object.hasOwn(captured.init, 'skipTlsVerify'), false);
+  assert.equal(Object.hasOwn(captured.init, 'insecureSkipVerify'), false);
+  assert.ok(captured.init.signal instanceof AbortSignal);
   assert.equal(res.count, 1);
   assert.equal(res.results[0].structValue.fields.name.stringValue, 'demo-product');
 });
@@ -338,4 +343,17 @@ test('errors cover missing configuration, upstream failures, HTTP errors, and in
   }));
   const invalidJson = await loadHandler(listProductsPath, {});
   await assert.rejects(() => invalidJson(), /response is not valid JSON/);
+
+  const invalidTls = await loadHandler(listProductsPath, {}, { bindings: { skipTlsVerify: true } });
+  await assert.rejects(() => invalidTls(), /skipTlsVerify is not supported/);
+});
+
+test('applies upstream timeout through AbortController', async () => {
+  setFetch(async (url, init) => new Promise((resolve, reject) => {
+    assert.ok(init.signal instanceof AbortSignal);
+    init.signal.addEventListener('abort', () => reject(new Error('aborted by test timeout')), { once: true });
+  }));
+
+  const handler = await loadHandler(listProductsPath, {}, { limits: { timeoutMs: 1 } });
+  await assert.rejects(() => handler(), /aborted by test timeout/);
 });

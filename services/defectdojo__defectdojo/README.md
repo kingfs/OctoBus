@@ -25,7 +25,6 @@ The service uses DefectDojo API v2 endpoints and should also work with nearby De
 - `baseUrl` / `restBaseUrl`: aliases for `defectdojo_base_url`.
 - `headers`: optional extra HTTP headers.
 - `timeoutMs`: HTTP timeout in milliseconds.
-- `skipTlsVerify`: enables insecure TLS options for private test deployments.
 
 `secret.schema.json`
 
@@ -40,8 +39,7 @@ Example instance config:
 {
   "config": {
     "defectdojo_base_url": "http://localhost:18088",
-    "timeoutMs": 5000,
-    "skipTlsVerify": false
+    "timeoutMs": 5000
   },
   "secret": {
     "defectdojo_api_key": "<api-key-without-Token-prefix>"
@@ -79,6 +77,7 @@ List responses preserve the raw upstream JSON and also expose the common Django 
 - `close_old_findings=true` may close findings that are no longer present in an imported report.
 - `do_not_reactivate=true` on reimport prevents previously closed findings from being reactivated.
 - The service never reads local file paths; callers must pass report content in `file_content`.
+- TLS certificate verification is not skipped by this service. Use HTTP for local test deployments or a trusted TLS certificate for HTTPS DefectDojo endpoints.
 
 ## Write Semantics
 
@@ -187,3 +186,4 @@ The service can also be imported into a local OctoBus daemon with source suffix 
 - Import and reimport behavior depends on DefectDojo parser support, user permissions, deduplication settings, and product hierarchy flags.
 - `file_content` is treated as request text and sent directly as the multipart file body. Binary report uploads are not specially encoded.
 - The service intentionally does not read local file paths from requests.
+- `skipTlsVerify`, `tlsInsecureSkipVerify`, and `insecureSkipVerify` are rejected with `INVALID_ARGUMENT` because Node.js native `fetch` does not support those TLS-skip options.
