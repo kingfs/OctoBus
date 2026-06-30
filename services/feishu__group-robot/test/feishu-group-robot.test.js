@@ -95,6 +95,7 @@ test('SendTextMessage sends correct payload and returns status 200 response', as
   assert.equal(res.http_status, 200);
   assert.equal(res.http_body, '');
   assert.match(logs.join('\n'), /\/hook\/\*\*\*/);
+  assert.doesNotMatch(logs.join('\n'), /test-token/);
 });
 
 test('SendTextMessage accepts status 209 and 210 as success', async () => {
@@ -150,6 +151,28 @@ test('network failures map to UNAVAILABLE', async () => {
   await assert.rejects(
     () => rpcdef(buildCtx({ req: { message: 'test' } }))[METHOD_SEND_TEXT_PATH](),
     /connection refused/,
+  );
+});
+
+test('response read failures map to UNAVAILABLE with sanitized details', async () => {
+  globalThis.fetch = async () => ({
+    status: 200,
+    text: async () => {
+      throw new Error('read failed');
+    },
+  });
+
+  await assert.rejects(
+    () => rpcdef(buildCtx({ req: { message: 'test' } }))[METHOD_SEND_TEXT_PATH](),
+    (err) => {
+      assert.equal(err.code, grpcStatus.UNAVAILABLE);
+      assert.equal(err.legacyCode, 'UNAVAILABLE');
+      assert.equal(err.httpStatus, 200);
+      assert.equal(err.httpBody, '');
+      assert.equal(err.httpBodyLength, 0);
+      assert.match(err.message, /read failed/);
+      return true;
+    },
   );
 });
 

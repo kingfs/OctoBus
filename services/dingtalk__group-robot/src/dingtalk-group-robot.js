@@ -161,7 +161,9 @@ const buildDingDingPayload = (sendMsg, isAtAll, atMobiles, atUserIds) => ({
   },
 });
 
-const redactWebhookUrl = (url) => String(url).replace(/access_token=[^&]+/, 'access_token=***');
+const redactWebhookUrl = (url) => String(url)
+  .replace(/access_token=[^&]+/, 'access_token=***')
+  .replace(/sign=[^&]+/, 'sign=***');
 
 const buildSignedWebhookUrl = (webhookUrl, secret, now = Date.now) => {
   if (!secret) return webhookUrl;
@@ -208,7 +210,18 @@ const sendToDingTalk = async (config, log) => {
   }
 
   const httpStatus = Number(res.status || 0);
-  const httpBody = String((await res.text()) ?? '');
+  let httpBody;
+  try {
+    httpBody = String((await res.text()) ?? '');
+  } catch (err) {
+    const reason = err?.message || 'read response failed';
+    log('failure', { reason, stage: 'read', httpStatus });
+    return {
+      httpStatus,
+      httpBody: '',
+      error: errorWithCode('UNAVAILABLE', reason),
+    };
+  }
   log('response', {
     httpStatus,
     httpBodyLength: httpBody.length,

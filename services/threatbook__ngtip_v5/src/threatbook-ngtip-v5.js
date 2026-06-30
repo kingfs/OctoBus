@@ -49,6 +49,16 @@ const toTrimmedString = (value) => {
   return String(raw).trim();
 };
 
+const redactSensitive = (value, sensitiveValues = []) => {
+  let out = String(value ?? '');
+  for (const sensitive of sensitiveValues || []) {
+    const raw = toTrimmedString(sensitive);
+    if (!raw) continue;
+    out = out.split(raw).join('<redacted>');
+  }
+  return out;
+};
+
 const normalizeBaseUrl = (value) => {
   const raw = toTrimmedString(value);
   if (!/^https?:\/\//i.test(raw)) return '';
@@ -187,6 +197,19 @@ const encodeQueryPairs = (query = {}) => {
 
 const buildQueryUrl = (domain, path, query) => `${domain}${path}?${encodeQueryPairs(query)}`;
 
+const redactUrlForLog = (url, bindings = {}) => {
+  const sensitiveValues = [resolveApiKey(bindings), resolveSalt(bindings)];
+  try {
+    const parsed = new URL(String(url));
+    for (const key of ['apikey', 'apiKey', 'token', 'salt']) {
+      if (parsed.searchParams.has(key)) parsed.searchParams.set(key, '<redacted>');
+    }
+    return redactSensitive(parsed.toString(), sensitiveValues);
+  } catch {
+    return redactSensitive(url, sensitiveValues);
+  }
+};
+
 const attachResponse = (err, response) => {
   err.response = response;
   return err;
@@ -205,7 +228,7 @@ const fetchWithStatus = async (url, ctx = {}) => {
     });
   } catch (err) {
     const errMsg = err?.cause?.message || err?.message || 'fetch failed';
-    logFlow(ctx, 'fetch:error', { url, error: errMsg });
+    logFlow(ctx, 'fetch:error', { url: redactUrlForLog(url, bindings), error: redactSensitive(errMsg, [resolveApiKey(bindings), resolveSalt(bindings)]) });
     return { httpStatus: 0, httpBody: errMsg };
   } finally {
     timeout.clear();
@@ -215,11 +238,11 @@ const fetchWithStatus = async (url, ctx = {}) => {
     httpBody = await res.text();
   } catch (err) {
     const errMsg = err?.message || 'response read failed';
-    logFlow(ctx, 'fetch:read-error', { url, httpStatus: res.status, error: errMsg });
+    logFlow(ctx, 'fetch:read-error', { url: redactUrlForLog(url, bindings), httpStatus: res.status, error: redactSensitive(errMsg, [resolveApiKey(bindings), resolveSalt(bindings)]) });
     return { httpStatus: 0, httpBody: errMsg };
   }
   const httpStatus = Number(res.status || 0);
-  logFlow(ctx, 'fetch:response', { url, httpStatus, bodyLength: httpBody?.length || 0 });
+  logFlow(ctx, 'fetch:response', { url: redactUrlForLog(url, bindings), httpStatus, bodyLength: httpBody?.length || 0 });
   return { httpStatus, httpBody: String(httpBody ?? '') };
 };
 
@@ -369,6 +392,11 @@ const adaptHandler = (fn) => (reqOrSdkArg, ctx) => {
     const { request: req, ...rest } = reqOrSdkArg;
     return fn(req ?? {}, rest);
   }
+  if (reqOrSdkArg && typeof reqOrSdkArg === 'object' && (
+    'req' in reqOrSdkArg || 'config' in reqOrSdkArg || 'secret' in reqOrSdkArg || 'bindings' in reqOrSdkArg
+  )) {
+    return fn(reqOrSdkArg.req ?? {}, reqOrSdkArg);
+  }
   return fn(reqOrSdkArg, {});
 };
 
@@ -407,6 +435,8 @@ export const _test = {
   mergedBindings,
   normalizeBaseUrl,
   parseNgTipResponse,
+  redactSensitive,
+  redactUrlForLog,
   requireApiKey,
   requireDomain,
   requireResource,

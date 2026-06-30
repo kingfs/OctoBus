@@ -135,6 +135,31 @@ const encodeQueryPairs = (query = {}) => {
   return parts.join('&');
 };
 
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const redactUrlSensitiveQuery = (url) => {
+  try {
+    const parsed = new URL(String(url));
+    for (const key of ['apikey', 'api_key', 'sign', 'token']) {
+      if (parsed.searchParams.has(key)) parsed.searchParams.set(key, '***');
+    }
+    return parsed.toString();
+  } catch {
+    return String(url).replace(/((?:apikey|api_key|sign|token)=)[^&\s]+/gi, '$1***');
+  }
+};
+
+const sanitizeSensitiveText = (value, sensitiveValues = []) => {
+  let text = String(value ?? '');
+  text = text.replace(/((?:apikey|api_key|sign|token)=)[^&\s"'<>]+/gi, '$1***');
+  for (const secretValue of sensitiveValues) {
+    const secretText = String(secretValue ?? '');
+    if (secretText.length < 3) continue;
+    text = text.replace(new RegExp(escapeRegExp(secretText), 'g'), '***');
+  }
+  return text;
+};
+
 const buildQueryUrl = (domain, query) => `${domain}${QUERY_IP_HTTP_PATH}?${encodeQueryPairs(query)}`;
 
 const attachResponse = (err, response) => {
@@ -144,6 +169,8 @@ const attachResponse = (err, response) => {
 
 const fetchWithStatus = async (url, ctx = {}) => {
   const bindings = ctx.bindings || {};
+  const sensitiveValues = [resolveApiKey(bindings)];
+  const logUrl = redactUrlSensitiveQuery(url);
   const timeoutMs = resolveTimeoutMs(ctx);
   const timeout = makeTimeoutSignal(timeoutMs);
   let res;
@@ -154,8 +181,8 @@ const fetchWithStatus = async (url, ctx = {}) => {
       ...buildTlsOptions(bindings),
     });
   } catch (err) {
-    const errMsg = err?.cause?.message || err?.message || 'fetch failed';
-    logFlow(ctx, 'fetch:error', { url, error: errMsg });
+    const errMsg = sanitizeSensitiveText(err?.cause?.message || err?.message || 'fetch failed', sensitiveValues);
+    logFlow(ctx, 'fetch:error', { url: logUrl, error: errMsg });
     return { httpStatus: 0, httpBody: errMsg };
   } finally {
     timeout.clear();
@@ -164,12 +191,12 @@ const fetchWithStatus = async (url, ctx = {}) => {
   try {
     httpBody = await res.text();
   } catch (err) {
-    const errMsg = err?.message || 'response read failed';
-    logFlow(ctx, 'fetch:read-error', { url, httpStatus: res.status, error: errMsg });
+    const errMsg = sanitizeSensitiveText(err?.message || 'response read failed', sensitiveValues);
+    logFlow(ctx, 'fetch:read-error', { url: logUrl, httpStatus: res.status, error: errMsg });
     return { httpStatus: 0, httpBody: errMsg };
   }
   const httpStatus = Number(res.status || 0);
-  logFlow(ctx, 'fetch:response', { url, httpStatus, bodyLength: httpBody?.length || 0 });
+  logFlow(ctx, 'fetch:response', { url: logUrl, httpStatus, bodyLength: httpBody?.length || 0 });
   return { httpStatus, httpBody: String(httpBody ?? '') };
 };
 
@@ -220,6 +247,7 @@ export const _test = {
   buildTlsOptions,
   encodeQueryPairs,
   errorWithCode,
+  escapeRegExp,
   fetchWithStatus,
   firstDefined,
   grpcCodeFor,
@@ -238,6 +266,8 @@ export const _test = {
   resolveCallContext,
   resolveDomain,
   resolveTimeoutMs,
+  redactUrlSensitiveQuery,
   toTrimmedString,
+  sanitizeSensitiveText,
   unwrapScalar,
 };

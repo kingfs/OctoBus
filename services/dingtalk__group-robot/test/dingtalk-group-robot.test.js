@@ -171,6 +171,9 @@ test('SendTextMessage returns success on HTTP 200 and signs URL', async () => {
     },
   });
   assert.match(logs.join('\n'), /access_token=\*\*\*/);
+  assert.doesNotMatch(logs.join('\n'), /test-token/);
+  assert.doesNotMatch(logs.join('\n'), /test-secret/);
+  assert.doesNotMatch(logs.join('\n'), /sign=[^*]/);
 });
 
 test('SendTextMessage rejects unsupported TLS skip bindings', async () => {
@@ -235,6 +238,28 @@ test('network errors map to UNAVAILABLE with status 0', async () => {
       assert.equal(err.httpStatus, 0);
       assert.equal(err.httpBody, '');
       assert.match(err.message, /network timeout/);
+      return true;
+    },
+  );
+});
+
+test('response read errors map to UNAVAILABLE without leaking body', async () => {
+  globalThis.fetch = async () => ({
+    status: 200,
+    text: async () => {
+      throw new Error('read failed');
+    },
+  });
+
+  await assert.rejects(
+    () => rpcdef(buildCtx({ req: { send_msg: 'test message' } }))[METHOD_SEND_TEXT_PATH](),
+    (err) => {
+      assert.equal(err.code, grpcStatus.UNAVAILABLE);
+      assert.equal(err.legacyCode, 'UNAVAILABLE');
+      assert.equal(err.httpStatus, 200);
+      assert.equal(err.httpBody, '');
+      assert.equal(err.httpBodyLength, 0);
+      assert.match(err.message, /read failed/);
       return true;
     },
   );
@@ -363,7 +388,7 @@ test('null request fallback and helper defaults are stable', async () => {
   assert.deepEqual(_test.resolveCallContext({ request: { send_msg: 'x' } }).req, { send_msg: 'x' });
   assert.deepEqual(_test.resolveCallContext({ req: null, request: null }).req, {});
   assert.equal(_test.resolveTimeoutMs({ bindings: { timeoutMs: -1 }, limits: { timeoutMs: 0 } }), 5000);
-  assert.equal(_test.redactWebhookUrl('https://x?access_token=abc&v=1'), 'https://x?access_token=***&v=1');
+  assert.equal(_test.redactWebhookUrl('https://x?access_token=abc&sign=sig&v=1'), 'https://x?access_token=***&sign=***&v=1');
   assert.equal(_test.coerceString(), '');
   assert.equal(_test.hasOwn(null, 'x'), false);
   assert.equal(_test.buildSignedWebhookUrl('https://example/robot', 's', () => null).includes('timestamp=0'), true);

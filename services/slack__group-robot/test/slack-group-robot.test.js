@@ -141,6 +141,7 @@ test('SendTextMessage returns OK on HTTP 200', async () => {
   assert.equal(capturedInit.timeoutMs, undefined);
   assert.deepEqual(JSON.parse(capturedInit.body), { text: 'test message' });
   assert.match(logs.join('\n'), /\\*\\*\\*/); // webhook URL is redacted in logs
+  assert.doesNotMatch(logs.join('\n'), /T00\/B00\/xxxx/);
 });
 
 test('SendTextMessage rejects unsupported TLS skip bindings', async () => {
@@ -193,6 +194,28 @@ test('network errors map to UNAVAILABLE with status 0', async () => {
       assert.equal(err.httpStatus, 0);
       assert.equal(err.httpBody, '');
       assert.match(err.message, /network timeout/);
+      return true;
+    },
+  );
+});
+
+test('response read errors map to UNAVAILABLE with sanitized details', async () => {
+  globalThis.fetch = async () => ({
+    status: 200,
+    text: async () => {
+      throw new Error('read failed');
+    },
+  });
+
+  await assert.rejects(
+    () => rpcdef(buildCtx({ req: { message: 'test' } }))[METHOD_SEND_TEXT_PATH](),
+    (err) => {
+      assert.equal(err.code, grpcStatus.UNAVAILABLE);
+      assert.equal(err.legacyCode, 'UNAVAILABLE');
+      assert.equal(err.httpStatus, 200);
+      assert.equal(err.httpBody, '');
+      assert.equal(err.httpBodyLength, 0);
+      assert.match(err.message, /read failed/);
       return true;
     },
   );

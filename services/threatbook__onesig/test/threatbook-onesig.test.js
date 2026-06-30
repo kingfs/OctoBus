@@ -35,6 +35,12 @@ const setFetch = (impl) => {
   globalThis.fetch = impl;
 };
 
+const abortingFetch = (message = 'request aborted') => (_url, init) => new Promise((resolve, reject) => {
+  const abort = () => reject(new Error(message));
+  if (init.signal?.aborted) abort();
+  else init.signal?.addEventListener('abort', abort, { once: true });
+});
+
 const buildCtx = (overrides = {}) => ({
   config: {
     base_url: 'https://onesig.example.com',
@@ -277,12 +283,14 @@ test('maps upstream transport and response failures', async () => {
     (err) => assert.match(err.message, /network down/),
   );
 
-  setFetch(async () => response(500, 'boom'));
-  await expectGrpcError(
-    () => callHandler(METHOD_BATCH_BLOCK_FULL, { ip_addresses: ['1.1.1.1'] }, buildCtx()),
-    'UNAVAILABLE',
-    (err) => assert.match(err.message, /upstream http 500/),
-  );
+  for (const status of [401, 403, 404, 429, 500]) {
+    setFetch(async () => response(status, `status-${status}`));
+    await expectGrpcError(
+      () => callHandler(METHOD_BATCH_BLOCK_FULL, { ip_addresses: ['1.1.1.1'] }, buildCtx()),
+      'UNAVAILABLE',
+      (err) => assert.match(err.message, new RegExp(`upstream http ${status}`)),
+    );
+  }
 
   setFetch(async () => response(200, ''));
   await expectGrpcError(
@@ -316,12 +324,55 @@ test('maps upstream transport and response failures', async () => {
     'UNAVAILABLE',
     (err) => assert.match(err.message, /read failed/),
   );
+
+  setFetch(abortingFetch('timeout waiting for demoKey'));
+  await expectGrpcError(
+    () => callHandler(METHOD_BATCH_BLOCK_FULL, { ip_addresses: ['1.1.1.1'] }, buildCtx({ limits: { timeoutMs: 1 } })),
+    'UNAVAILABLE',
+    (err) => {
+      assert.match(err.message, /timeout/);
+      assert.doesNotMatch(err.message, /demoKey/);
+    },
+  );
 });
 
 test('rpcdef falls back to context request', async () => {
   setFetch(async () => response(200, { responseCode: 0, verboseMsg: 'ok', data: { list: [] } }));
   const result = await rpcdef(buildCtx({ req: { ip_addresses: ['2.2.2.2'] } }))[METHOD_BATCH_BLOCK_PATH]();
   assert.equal(result.status.response_code, 0);
+});
+
+test('request cannot override secrets and logs/errors redact API key material', async () => {
+  fixedNow();
+  const logs = [];
+  let capturedUrl;
+  console.log = (...args) => logs.push(args.map((arg) => String(arg)).join(' '));
+  setFetch(async (url) => {
+    capturedUrl = String(url);
+    const parsed = new URL(capturedUrl);
+    return response(401, `bad apikey=demoKey&sign=${parsed.searchParams.get('sign')}&secret=demoSecret`);
+  });
+
+  await expectGrpcError(
+    () => callHandler(METHOD_BATCH_BLOCK_FULL, {
+      ip_addresses: ['1.1.1.1'],
+      api_key: 'requestKey',
+      apiKey: 'requestKey',
+      secret: 'requestSecret',
+    }, buildCtx()),
+    'UNAVAILABLE',
+    (err) => {
+      assert.match(err.message, /upstream http 401/);
+      assert.doesNotMatch(err.message, /demoKey|demoSecret|requestKey|requestSecret/);
+    },
+  );
+
+  const url = new URL(capturedUrl);
+  const expectedSign = crypto.createHmac('sha1', 'demoSecret').update('demoKey1700000000').digest('base64');
+  assert.equal(url.searchParams.get('apikey'), 'demoKey');
+  assert.equal(url.searchParams.get('sign'), expectedSign);
+  assert.doesNotMatch(logs.join('\n'), /demoKey|demoSecret|requestKey|requestSecret/);
+  assert.match(logs.join('\n'), /apikey=\*\*\*/);
 });
 
 test('helper functions cover signing, normalization, extraction, and logging branches', () => {
@@ -359,6 +410,8 @@ test('helper functions cover signing, normalization, extraction, and logging bra
   assert.equal(_test.computeTimestampValue('seconds'), '1700000000');
   assert.equal(_test.computeHmacSha1Base64('secret', 'data'), crypto.createHmac('sha1', 'secret').update('data').digest('base64'));
   assert.equal(_test.encodeQueryComponent('a b'), 'a%20b');
+  assert.equal(_test.redactUrlSensitiveQuery('https://x.test/p?apikey=k&sign=s&x=1'), 'https://x.test/p?apikey=***&sign=***&x=1');
+  assert.equal(_test.sanitizeSensitiveText('apikey=k&sign=s body secret', ['secret']), 'apikey=***&sign=*** body ***');
   const signed = _test.buildSignedUrl({
     baseUrl: 'https://api.local',
     path: '/x?existing=1',

@@ -25,6 +25,12 @@ const setFetch = (impl) => {
   globalThis.fetch = impl;
 };
 
+const abortingFetch = (message = 'request aborted') => (_url, init) => new Promise((resolve, reject) => {
+  const abort = () => reject(new Error(message));
+  if (init.signal?.aborted) abort();
+  else init.signal?.addEventListener('abort', abort, { once: true });
+});
+
 const buildCtx = (overrides = {}) => ({
   config: {
     threatbook_domain: 'https://api.threatbook.cn',
@@ -164,7 +170,7 @@ test('supports aliases and IPv6 query encoding', async () => {
 });
 
 test('maps HTTP and network failures with response details', async () => {
-  for (const [status, legacyCode] of [[401, 'PERMISSION_DENIED'], [403, 'PERMISSION_DENIED'], [400, 'FAILED_PRECONDITION'], [404, 'FAILED_PRECONDITION'], [500, 'UNAVAILABLE'], [502, 'UNAVAILABLE']]) {
+  for (const [status, legacyCode] of [[401, 'PERMISSION_DENIED'], [403, 'PERMISSION_DENIED'], [400, 'FAILED_PRECONDITION'], [404, 'FAILED_PRECONDITION'], [429, 'FAILED_PRECONDITION'], [500, 'UNAVAILABLE'], [502, 'UNAVAILABLE']]) {
     setFetch(async () => response(status, { response_code: -1, verbose_msg: `status ${status}` }));
     await expectGrpcError(
       () => callHandler(METHOD_QUERY_IP_REPUTATION_FULL, { ip: '8.8.8.8' }, buildCtx()),
@@ -205,12 +211,53 @@ test('maps HTTP and network failures with response details', async () => {
       assert.ok(err.response.http_body_length > 0);
     },
   );
+
+  setFetch(abortingFetch('timeout waiting for test_api_key'));
+  await expectGrpcError(
+    () => callHandler(METHOD_QUERY_IP_REPUTATION_FULL, { ip: '8.8.8.8' }, buildCtx({ limits: { timeoutMs: 1 } })),
+    'UNAVAILABLE',
+    (err) => {
+      assert.equal(err.response.http_status, 0);
+      assert.equal(err.response.http_body, '');
+      assert.ok(err.response.http_body_length > 0);
+      assert.doesNotMatch(String(err.response.http_body_length), /test_api_key/);
+    },
+  );
 });
 
 test('rpcdef falls back to context request', async () => {
   setFetch(async () => response(200, { response_code: 0, data: [] }));
   const result = await rpcdef(buildCtx({ req: { ip: '9.9.9.9' } }))[METHOD_QUERY_IP_REPUTATION_PATH]();
   assert.equal(result.http_status, 200);
+});
+
+test('request cannot override API key and logs redact query secret', async () => {
+  const logs = [];
+  let capturedUrl;
+  console.log = (...args) => logs.push(args.map((arg) => String(arg)).join(' '));
+  setFetch(async (url) => {
+    capturedUrl = String(url);
+    return response(500, `apikey=test_api_key`);
+  });
+
+  await expectGrpcError(
+    () => callHandler(METHOD_QUERY_IP_REPUTATION_FULL, {
+      ip: '8.8.8.8',
+      threatbook_apikey: 'request_key',
+      apikey: 'request_key',
+      apiKey: 'request_key',
+    }, buildCtx()),
+    'UNAVAILABLE',
+    (err) => {
+      assert.match(err.message, /upstream http 500/);
+      assert.doesNotMatch(err.message, /test_api_key|request_key/);
+    },
+  );
+
+  const url = new URL(capturedUrl);
+  assert.equal(url.searchParams.get('apikey'), 'test_api_key');
+  assert.doesNotMatch(logs.join('\n'), /test_api_key|request_key/);
+  assert.match(logs.join('\n'), /apikey=\*\*\*/);
 });
 
 test('helper functions cover normalization, mapping, logging, and direct fetch branches', async () => {
@@ -238,6 +285,8 @@ test('helper functions cover normalization, mapping, logging, and direct fetch b
   assert.equal(_test.buildTlsOptions({ insecureSkipVerify: true }).dispatcher, _test.insecureTlsDispatcher);
   assert.equal(_test.requireIp({ resource: { value: '1.1.1.1' } }), '1.1.1.1');
   assert.equal(_test.encodeQueryPairs({ a: 'x y', b: '', c: null, d: 0 }), 'a=x%20y&d=0');
+  assert.equal(_test.redactUrlSensitiveQuery('https://x.test/p?apikey=k&token=t&x=1'), 'https://x.test/p?apikey=***&token=***&x=1');
+  assert.equal(_test.sanitizeSensitiveText('apikey=k&token=t body secret', ['secret']), 'apikey=***&token=*** body ***');
   assert.equal(_test.buildQueryUrl('https://api.local', { a: 'b' }), 'https://api.local/tip_api/v4/ip?a=b');
   assert.equal(_test.mapHttpStatusToCode(401), 'PERMISSION_DENIED');
   assert.equal(_test.mapHttpStatusToCode(400), 'FAILED_PRECONDITION');

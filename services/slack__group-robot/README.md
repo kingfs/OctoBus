@@ -2,6 +2,8 @@
 
 OctoBus service package for sending text messages through Slack Incoming Webhooks.
 
+Service name: `slack-group-robot`
+
 ## Supported Versions
 
 | Platform | API | Version |
@@ -55,7 +57,7 @@ Send a text message to a Slack channel via Incoming Webhook.
 | Field | Type | Description |
 |-------|------|-------------|
 | `http_status` | int32 | HTTP status from Slack (200 on success, 0 on network error) |
-| `http_body` | string | Raw response body (`ok` on success, error string on failure) |
+| `http_body` | string | Compatibility field. The implementation returns an empty string to avoid leaking upstream response content. |
 
 **Error mapping:**
 
@@ -65,6 +67,23 @@ Send a text message to a Slack channel via Incoming Webhook.
 | Empty message | `INVALID_ARGUMENT` |
 | HTTP non-200 response (4xx/5xx) | `UNAVAILABLE` |
 | Network failure (DNS, timeout, connection refused) | `UNAVAILABLE` (http_status=0, http_body empty) |
+| Response read failure | `UNAVAILABLE` |
+
+Runtime handler example:
+
+```js
+import { handlers } from './src/slack-group-robot.js';
+
+await handlers['Slack_GroupRobot.Slack_GroupRobot/SendTextMessage']({
+  secret: {
+    webhook: 'https://hooks.slack.com/services/T00/B00/xxxx'
+  },
+  config: { timeoutMs: 5000 },
+  request: {
+    message: 'OctoBus alert'
+  }
+});
+```
 
 ## Suggested Instance Values
 
@@ -89,7 +108,7 @@ Secret:
 ### SendTextMessage
 
 - **Write operation**: Sends a message to Slack. Each call produces a single message.
-- **Idempotency**: NOT idempotent — each successful call sends a new message. There is no deduplication at the API level. If retrying after a network error (http_status=0), the caller must decide whether duplicate messages are acceptable.
+- **Idempotency**: NOT idempotent. Each successful call sends a new message. There is no deduplication at the API level. If retrying after a network error (http_status=0), the caller must decide whether duplicate messages are acceptable.
 - **Rollback**: Slack messages cannot be deleted or edited via Incoming Webhooks after sending. There is no rollback mechanism at the API level. Mitigation: send a follow-up correction message if needed.
 - **Audit**: The service logs the redacted webhook URL, message length, HTTP status, and response body length. The full message content is NOT logged.
 
@@ -98,8 +117,17 @@ Secret:
 - **Duplicate messages on retry**: Network failures trigger `UNAVAILABLE`, but the upstream Slack may have already delivered the message. Callers must handle potential duplicates in alert pipelines.
 - **Rate limiting**: Slack enforces per-channel rate limits. Excessive traffic may trigger 429 responses (mapped to `UNAVAILABLE`). Configure appropriate throttling in your alert pipeline.
 - **Message delivery is best-effort**: Slack Incoming Webhooks have no delivery confirmation beyond HTTP 200. There is no retry or queue at the Slack side.
-- **URL rotation**: Slack webhook URLs can be regenerated from the Slack admin panel. Rotating the URL invalidates the old one — update the instance secret accordingly.
+- **URL rotation**: Slack webhook URLs can be regenerated from the Slack admin panel. Rotating the URL invalidates the old one. Update the instance secret accordingly.
 - **Channel deletion**: If the target channel is deleted, the webhook returns HTTP 404. Re-create the webhook for a new channel.
+- **Credential source**: Request `webhook` fields are ignored. Credentials are resolved from instance secret first, then deprecated config or binding fallbacks.
+- **TLS**: TLS verification skip flags are rejected with `INVALID_ARGUMENT`; Slack webhooks must use normal HTTPS verification.
+- **Sanitization**: Logs redact webhook path tokens. Message content and raw upstream bodies are not logged or returned.
+
+## Limitations
+
+- Only Incoming Webhook text payloads are supported.
+- Slack response strings such as `invalid_payload` are not returned in `http_body`; only status and body length are exposed on errors.
+- Retries may create duplicate messages if Slack received the original request.
 
 ## Package Files
 
@@ -118,6 +146,5 @@ Secret:
 ```bash
 cd services
 npm run validate -- --service-dir slack__group-robot
-npm test -- --service-dir slack__group-robot --coverage
-npm run pack:check
+npm test -- --service-dir slack__group-robot
 ```

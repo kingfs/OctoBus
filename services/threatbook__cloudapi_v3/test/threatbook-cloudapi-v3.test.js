@@ -196,6 +196,33 @@ test('DomainQuery sends explicit exclude from scalar wrapper', async () => {
   assert.equal(url.searchParams.get('exclude'), 'intel');
 });
 
+test('request fields cannot override secret and structured errors redact api key', async () => {
+  let captured;
+  setFetch(async (url) => {
+    captured = String(url);
+    return response(200, {
+      response_code: 1400,
+      verbose_msg: 'upstream echoed test_api_key',
+      data: {},
+    });
+  });
+
+  await expectGrpcError(
+    () => callHandler(METHOD_IP_REPUTATION_FULL, {
+      resource: '8.8.8.8',
+      apikey: 'request_supplied_key',
+      apiKey: 'request_supplied_key',
+    }, buildCtx()),
+    'FAILED_PRECONDITION',
+    (err) => {
+      assert.equal(new URL(captured).searchParams.get('apikey'), 'test_api_key');
+      assert.doesNotMatch(err.message, /test_api_key/);
+      assert.doesNotMatch(err.message, /request_supplied_key/);
+      assert.equal(parseStructuredError(err).verbose_msg, 'upstream echoed <redacted>');
+    },
+  );
+});
+
 test('maps HTTP, business, JSON, and response_code failures to structured errors', async () => {
   setFetch(async () => response(401, { response_code: 1101, verbose_msg: 'invalid apikey' }));
   await expectGrpcError(
@@ -210,11 +237,25 @@ test('maps HTTP, business, JSON, and response_code failures to structured errors
     },
   );
 
+  setFetch(async () => response(403, { response_code: 1103, verbose_msg: 'forbidden' }));
+  await expectGrpcError(
+    () => callHandler(METHOD_IP_REPUTATION_FULL, { resource: '8.8.8.8' }, buildCtx()),
+    'PERMISSION_DENIED',
+    (err) => assert.equal(parseStructuredError(err).http_status, 403),
+  );
+
   setFetch(async () => response(404, { response_code: 1204, verbose_msg: 'not found' }));
   await expectGrpcError(
     () => callHandler(METHOD_IP_REPUTATION_FULL, { resource: '8.8.8.8' }, buildCtx()),
     'FAILED_PRECONDITION',
     (err) => assert.equal(parseStructuredError(err).http_status, 404),
+  );
+
+  setFetch(async () => response(429, { response_code: 1429, verbose_msg: 'rate limited' }));
+  await expectGrpcError(
+    () => callHandler(METHOD_IP_REPUTATION_FULL, { resource: '8.8.8.8' }, buildCtx()),
+    'FAILED_PRECONDITION',
+    (err) => assert.equal(parseStructuredError(err).reason, 'upstream http 429'),
   );
 
   setFetch(async () => response(503, { message: 'down' }));
@@ -280,6 +321,15 @@ test('maps network and response read errors', async () => {
       assert.equal(payload.http_status, 200);
       assert.equal(payload.reason, 'read failed');
     },
+  );
+});
+
+test('DomainQuery exposes upstream failure mapping', async () => {
+  setFetch(async () => response(500, { message: 'domain query down' }));
+  await expectGrpcError(
+    () => callHandler(METHOD_DOMAIN_QUERY_FULL, { resource: 'example.com' }, buildCtx()),
+    'UNAVAILABLE',
+    (err) => assert.equal(parseStructuredError(err).http_status, 500),
   );
 });
 

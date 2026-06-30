@@ -144,7 +144,16 @@ const sendToFeishu = async (ctx, webhook, payload, log) => {
   }
 
   const httpStatus = Number(res.status || 0);
-  const httpBody = String((await res.text()) ?? '');
+  let httpBody;
+  try {
+    httpBody = String((await res.text()) ?? '');
+  } catch (err) {
+    const error = errorWithCode('UNAVAILABLE', err?.message || 'read response failed');
+    error.httpStatus = httpStatus;
+    error.httpBody = '';
+    error.httpBodyLength = 0;
+    throw error;
+  }
   log('SendTextMessage:response', {
     httpStatus,
     httpBodyLength: httpBody.length,

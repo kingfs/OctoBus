@@ -86,6 +86,19 @@ const toBoolean = (value) => {
   return false;
 };
 
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const sanitizeSensitiveText = (value, sensitiveValues = []) => {
+  let text = String(value ?? '');
+  text = text.replace(/((?:api_key|apikey|sign|auth_timestamp)=)[^&\s"'<>]+/gi, '$1***');
+  for (const secretValue of sensitiveValues) {
+    const secretText = String(secretValue ?? '');
+    if (secretText.length < 3) continue;
+    text = text.replace(new RegExp(escapeRegExp(secretText), 'g'), '***');
+  }
+  return text;
+};
+
 const mergedBindings = (ctx = {}) => ({
   ...(ctx.config ?? {}),
   ...(ctx.secret ?? {}),
@@ -177,21 +190,31 @@ const normalizeRemark = (req = {}, iocList = []) => {
   return `${iocList[0]}${iocList.length > 1 ? ` 等${iocList.length}个域名` : ''},万象联动封禁`;
 };
 
-const mapHttpError = (statusCode, text) => {
-  if (statusCode === 401 || statusCode === 403) throw errorWithCode('PERMISSION_DENIED', `upstream http ${statusCode}: ${text}`);
-  if (statusCode >= 400 && statusCode < 500) throw errorWithCode('FAILED_PRECONDITION', `upstream http ${statusCode}: ${text}`);
-  throw errorWithCode('UNAVAILABLE', `upstream http ${statusCode}: ${text}`);
+const mapHttpError = (statusCode, text, sensitiveValues = []) => {
+  const sanitized = sanitizeSensitiveText(text, sensitiveValues);
+  if (statusCode === 401 || statusCode === 403) throw errorWithCode('PERMISSION_DENIED', `upstream http ${statusCode}: ${sanitized}`);
+  if (statusCode >= 400 && statusCode < 500) throw errorWithCode('FAILED_PRECONDITION', `upstream http ${statusCode}: ${sanitized}`);
+  throw errorWithCode('UNAVAILABLE', `upstream http ${statusCode}: ${sanitized}`);
 };
 
-const parseSuccessBody = (text, meta, actionLabel, statusCode) => {
+const parseSuccessBody = (text, meta, actionLabel, statusCode, sensitiveValues = []) => {
   if (!String(text || '').trim()) return { data: null };
   let json;
   try {
     json = JSON.parse(text);
   } catch {
-    const excerpt = text.length > 100 ? `${text.substring(0, 100)}...` : text;
+    const sanitizedText = sanitizeSensitiveText(text, sensitiveValues);
+    const excerpt = sanitizedText.length > 100 ? `${sanitizedText.substring(0, 100)}...` : sanitizedText;
     logFlow(meta, `${actionLabel}_ParseError`, { http_status: statusCode, text: excerpt });
     throw errorWithCode('UNKNOWN', 'response is not valid JSON');
+  }
+  const responseCodeRaw = firstDefined(json.response_code, json.responseCode, json.code);
+  if (responseCodeRaw !== undefined) {
+    const responseCode = Number(responseCodeRaw);
+    if (responseCode !== 0) {
+      const responseMessage = sanitizeSensitiveText(trimString(firstDefined(json.response_message, json.verbose_msg, json.message)), sensitiveValues);
+      throw errorWithCode('FAILED_PRECONDITION', `response_code=${responseCode}: ${responseMessage || 'TDP business failure'}`);
+    }
   }
   return { data: toValue(json) };
 };
@@ -217,6 +240,7 @@ const operateDomain = async (req = {}, ctx = {}, actionLabel, operationType) => 
     secret: runtime.bindings.secret,
     timestampSec,
   });
+  const sensitiveValues = [runtime.bindings.apiKey, runtime.bindings.secret, sign];
   const payload = {
     block_direction: 'out',
     operate: operationType,
@@ -239,7 +263,7 @@ const operateDomain = async (req = {}, ctx = {}, actionLabel, operationType) => 
       ...buildTlsOptions(runtime.bindings),
     });
   } catch (err) {
-    const reason = err?.cause?.message || err?.message || 'fetch failed';
+    const reason = sanitizeSensitiveText(err?.cause?.message || err?.message || 'fetch failed', sensitiveValues);
     logFlow(runtime.meta, actionLabel, {
       ioc_list: iocList,
       attempt_url: runtime.bindings.baseUrl,
@@ -256,7 +280,7 @@ const operateDomain = async (req = {}, ctx = {}, actionLabel, operationType) => 
   try {
     text = await res.text();
   } catch (err) {
-    throw errorWithCode('UNAVAILABLE', err?.message || 'response read failed');
+    throw errorWithCode('UNAVAILABLE', sanitizeSensitiveText(err?.message || 'response read failed', sensitiveValues));
   }
   const statusCode = res.status;
   const isSuccess = TRANSPORT_SUCCESS_CODES.has(statusCode);
@@ -266,13 +290,13 @@ const operateDomain = async (req = {}, ctx = {}, actionLabel, operationType) => 
     http_status: statusCode,
     success: isSuccess,
     latency: Date.now() - startTime,
-    api_key_used: `${runtime.bindings.apiKey.substring(0, 4)}***`,
+    api_key_present: Boolean(runtime.bindings.apiKey),
     timestampSec,
     sign_len: sign.length,
   });
 
-  if (!isSuccess) mapHttpError(statusCode, text);
-  return parseSuccessBody(text, runtime.meta, actionLabel, statusCode);
+  if (!isSuccess) mapHttpError(statusCode, text, sensitiveValues);
+  return parseSuccessBody(text, runtime.meta, actionLabel, statusCode, sensitiveValues);
 };
 
 const blockDomain = (req = {}, ctx = {}) => operateDomain(req, ctx, 'BlockDomain', 'add');
@@ -298,6 +322,7 @@ export const _test = {
   buildTlsOptions,
   computeTimestampSeconds,
   errorWithCode,
+  escapeRegExp,
   extractList,
   firstDefined,
   generateHmacSha256Signature,
@@ -317,6 +342,7 @@ export const _test = {
   prepareRuntime,
   resolveCallContext,
   resolveTimeoutMs,
+  sanitizeSensitiveText,
   toBoolean,
   toValue,
   trimString,

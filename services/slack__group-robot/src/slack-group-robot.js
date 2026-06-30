@@ -143,7 +143,18 @@ const sendToSlack = async (ctx, webhook, payload, log) => {
   }
 
   const httpStatus = Number(res.status || 0);
-  const httpBody = String((await res.text()) ?? '');
+  let httpBody;
+  try {
+    httpBody = String((await res.text()) ?? '');
+  } catch (err) {
+    const reason = err?.message || 'read response failed';
+    log('SendTextMessage:failure', { reason, stage: 'read', httpStatus });
+    const error = errorWithCode('UNAVAILABLE', reason);
+    error.httpStatus = httpStatus;
+    error.httpBody = '';
+    error.httpBodyLength = 0;
+    throw error;
+  }
   log('SendTextMessage:response', {
     httpStatus,
     httpBodyLength: httpBody.length,

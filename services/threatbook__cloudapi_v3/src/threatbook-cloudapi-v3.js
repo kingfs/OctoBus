@@ -41,6 +41,16 @@ const toTrimmedString = (value) => {
   return String(raw).trim();
 };
 
+const redactSensitive = (value, sensitiveValues = []) => {
+  let out = String(value ?? '');
+  for (const sensitive of sensitiveValues || []) {
+    const raw = toTrimmedString(sensitive);
+    if (!raw) continue;
+    out = out.split(raw).join('<redacted>');
+  }
+  return out;
+};
+
 const normalizeBaseUrl = (value) => {
   const raw = toTrimmedString(value);
   if (!/^https?:\/\//i.test(raw)) return '';
@@ -166,16 +176,17 @@ const toValue = (value) => {
 
 const throwStructuredError = (code, message, options = {}) => {
   const rawBody = String(options.rawBody ?? '');
+  const sensitiveValues = options.sensitiveValues || [];
   const payload = {
     code,
-    message,
+    message: redactSensitive(message, sensitiveValues),
     http_status: Number(options.httpStatus ?? 0),
     raw_body: '',
     raw_body_length: rawBody.length,
   };
-  if (options.reason) payload.reason = String(options.reason);
+  if (options.reason) payload.reason = redactSensitive(options.reason, sensitiveValues);
   if (options.responseCode !== undefined) payload.response_code = options.responseCode;
-  if (options.verboseMsg !== undefined) payload.verbose_msg = options.verboseMsg;
+  if (options.verboseMsg !== undefined) payload.verbose_msg = redactSensitive(options.verboseMsg, sensitiveValues);
   throw errorWithCode(code, JSON.stringify(payload));
 };
 
@@ -188,6 +199,7 @@ const mapHttpStatusToGrpcCode = (status) => {
 
 const fetchUpstream = async (url, ctx = {}) => {
   const bindings = ctx.bindings || {};
+  const sensitiveValues = [resolveApiKey(bindings)].filter(Boolean);
   const timeoutMs = resolveTimeoutMs(ctx);
   const timeout = makeTimeoutSignal(timeoutMs);
   let res;
@@ -202,6 +214,7 @@ const fetchUpstream = async (url, ctx = {}) => {
       httpStatus: 0,
       rawBody: '',
       reason: err?.cause?.message || err?.message || 'fetch failed',
+      sensitiveValues,
     });
   } finally {
     timeout.clear();
@@ -216,9 +229,12 @@ const fetchUpstream = async (url, ctx = {}) => {
       httpStatus,
       rawBody: '',
       reason: err?.message || 'response read failed',
+      sensitiveValues,
     });
   }
-  return { httpStatus, rawBody: String(rawBody ?? '') };
+  const result = { httpStatus, rawBody: String(rawBody ?? '') };
+  if (sensitiveValues.length) result.sensitiveValues = sensitiveValues;
+  return result;
 };
 
 const assertThreatBookSuccess = ({ httpStatus, rawBody }, parsed) => {
@@ -229,6 +245,7 @@ const assertThreatBookSuccess = ({ httpStatus, rawBody }, parsed) => {
       rawBody,
       rawJson: parsed.ok ? parsed.value : undefined,
       reason: `upstream http ${httpStatus}`,
+      sensitiveValues: parsed.sensitiveValues,
     });
   }
 
@@ -237,6 +254,7 @@ const assertThreatBookSuccess = ({ httpStatus, rawBody }, parsed) => {
       httpStatus,
       rawBody,
       reason: 'response is not valid JSON',
+      sensitiveValues: parsed.sensitiveValues,
     });
   }
 
@@ -249,6 +267,7 @@ const assertThreatBookSuccess = ({ httpStatus, rawBody }, parsed) => {
       rawBody,
       rawJson: parsed.value,
       reason: 'response_code missing',
+      sensitiveValues: parsed.sensitiveValues,
     });
   }
 
@@ -260,6 +279,7 @@ const assertThreatBookSuccess = ({ httpStatus, rawBody }, parsed) => {
       responseCode,
       verboseMsg,
       reason: 'response_code != 0',
+      sensitiveValues: parsed.sensitiveValues,
     });
   }
 
@@ -269,6 +289,7 @@ const assertThreatBookSuccess = ({ httpStatus, rawBody }, parsed) => {
 const parseThreatBookResponse = (result) => {
   const trimmed = result.rawBody.trim();
   const parsed = trimmed ? tryParseJson(trimmed) : { ok: false };
+  parsed.sensitiveValues = result.sensitiveValues || [];
   const ok = assertThreatBookSuccess(result, parsed);
   return {
     http_status: result.httpStatus,
@@ -340,6 +361,7 @@ export const _test = {
   normalizeExclude,
   normalizeLang,
   parseThreatBookResponse,
+  redactSensitive,
   requireApiKey,
   requireDomain,
   requireResource,

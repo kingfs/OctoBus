@@ -192,6 +192,31 @@ const computeHmacSha1Base64 = (key, data) => crypto.createHmac('sha1', String(ke
 
 const encodeQueryComponent = (value) => encodeURIComponent(String(value ?? ''));
 
+const escapeRegExp = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const redactUrlSensitiveQuery = (url) => {
+  try {
+    const parsed = new URL(String(url));
+    for (const key of ['apikey', 'api_key', 'sign']) {
+      if (parsed.searchParams.has(key)) parsed.searchParams.set(key, '***');
+    }
+    return parsed.toString();
+  } catch {
+    return String(url).replace(/((?:apikey|api_key|sign)=)[^&\s]+/gi, '$1***');
+  }
+};
+
+const sanitizeSensitiveText = (value, sensitiveValues = []) => {
+  let text = String(value ?? '');
+  text = text.replace(/((?:apikey|api_key|sign)=)[^&\s"'<>]+/gi, '$1***');
+  for (const secretValue of sensitiveValues) {
+    const secretText = String(secretValue ?? '');
+    if (secretText.length < 3) continue;
+    text = text.replace(new RegExp(escapeRegExp(secretText), 'g'), '***');
+  }
+  return text;
+};
+
 const buildLogPrefix = (meta = {}, action) => {
   const traceParts = [];
   if (meta.instance_id || meta.instanceId) traceParts.push(`inst=${meta.instance_id || meta.instanceId}`);
@@ -286,6 +311,7 @@ const callOneSig = async ({
     timestampPrecision: bindings.timestampPrecision,
     encodeSign: bindings.encodeSign,
   });
+  const sensitiveValues = [bindings.apiKey, bindings.secret, sign];
   const headers = {
     'content-type': 'application/json',
     ...bindings.headers,
@@ -295,7 +321,7 @@ const callOneSig = async ({
   const payload = body === undefined ? {} : body;
   const timeout = makeTimeoutSignal(timeoutMs);
   logFlow(meta, `${action}:request`, {
-    url,
+    url: redactUrlSensitiveQuery(url),
     method,
     bodyKeys: Object.keys(payload),
     timeoutMs,
@@ -315,8 +341,9 @@ const callOneSig = async ({
       ...buildTlsOptions(bindings),
     });
   } catch (err) {
-    logFlow(meta, `${action}:network-error`, { message: err?.message });
-    throw errorWithCode('UNAVAILABLE', err?.message || 'fetch failed');
+    const message = sanitizeSensitiveText(err?.message || 'fetch failed', sensitiveValues);
+    logFlow(meta, `${action}:network-error`, { message });
+    throw errorWithCode('UNAVAILABLE', message);
   } finally {
     timeout.clear();
   }
@@ -325,11 +352,11 @@ const callOneSig = async ({
   try {
     text = await res.text();
   } catch (err) {
-    throw errorWithCode('UNAVAILABLE', err?.message || 'response read failed');
+    throw errorWithCode('UNAVAILABLE', sanitizeSensitiveText(err?.message || 'response read failed', sensitiveValues));
   }
   logFlow(meta, `${action}:response`, { status: res.status, length: text.length });
 
-  if (res.status !== 200) throw errorWithCode('UNAVAILABLE', `upstream http ${res.status}: ${text}`);
+  if (res.status !== 200) throw errorWithCode('UNAVAILABLE', `upstream http ${res.status}: ${sanitizeSensitiveText(text, sensitiveValues)}`);
   if (!text.trim()) throw errorWithCode('UNKNOWN', 'response body is empty');
 
   let json;
@@ -341,7 +368,7 @@ const callOneSig = async ({
 
   const responseCodeRaw = firstDefined(json.responseCode, json.code, json.status);
   const responseCode = Number(responseCodeRaw);
-  const verboseMsg = trimString(firstDefined(json.verboseMsg, json.message));
+  const verboseMsg = sanitizeSensitiveText(trimString(firstDefined(json.verboseMsg, json.message)), sensitiveValues);
   if (responseCode !== 0) {
     logFlow(meta, `${action}:business-error`, { responseCode, verboseMsg });
     throw errorWithCode('FAILED_PRECONDITION', `responseCode=${responseCode}: ${verboseMsg || 'OneSIG business failure'}`);
@@ -511,6 +538,7 @@ export const _test = {
   encodeQueryComponent,
   enforceMaxLength,
   errorWithCode,
+  escapeRegExp,
   extractEntries,
   firstDefined,
   grpcCodeFor,
@@ -532,10 +560,12 @@ export const _test = {
   normalizeStringList,
   pickSignaturePayload,
   prepareRuntime,
+  redactUrlSensitiveQuery,
   requireEntryIds,
   requireIpList,
   resolveCallContext,
   resolveTimeoutMs,
+  sanitizeSensitiveText,
   toBoolean,
   trimString,
   unwrapScalar,
