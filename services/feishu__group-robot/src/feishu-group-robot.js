@@ -1,4 +1,5 @@
 import { GrpcError, grpcStatus } from '@chaitin-ai/octobus-sdk';
+import { Agent } from 'undici';
 
 export const METHOD_SEND_TEXT_PATH = '/Feishu_GroupRobot.Feishu_GroupRobot/SendTextMessage';
 export const METHOD_SEND_TEXT_FULL = 'Feishu_GroupRobot.Feishu_GroupRobot/SendTextMessage';
@@ -46,9 +47,16 @@ const resolveBindingString = (bindings, keys) => {
 
 const mergedBindings = (ctx = {}) => ({
   ...(ctx?.config ?? {}),
-  ...(ctx?.secret ?? {}),
   ...(ctx?.bindings ?? {}),
+  ...(ctx?.secret ?? {}),
 });
+
+const resolveWebhook = (ctx = {}) => {
+  const keys = ['webhook', 'webhook_url', 'webhookUrl', 'url'];
+  return resolveBindingString(ctx.secret || {}, keys)
+    || resolveBindingString(ctx.config || {}, keys)
+    || resolveBindingString(ctx.bindings || {}, keys);
+};
 
 const resolveCallContext = (ctx = {}) => ({
   ...ctx,
@@ -64,14 +72,18 @@ const resolveTimeoutMs = (ctx) => {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TIMEOUT_MS;
 };
 
+const insecureTlsDispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+
 const buildTlsOptions = (bindings) => {
   const enabled = Boolean(bindings?.skipTlsVerify || bindings?.tlsInsecureSkipVerify || bindings?.insecureSkipVerify);
   if (!enabled) return {};
-  return {
-    skipTlsVerify: true,
-    tlsInsecureSkipVerify: true,
-    insecureSkipVerify: true,
-  };
+  return { dispatcher: insecureTlsDispatcher };
+};
+
+const makeTimeoutSignal = (timeoutMs) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  return { signal: controller.signal, clear: () => clearTimeout(timeoutId) };
 };
 
 const createLogger = (meta = {}) => (action, details) => {
@@ -109,6 +121,7 @@ const buildPayload = (message) => ({
 });
 
 const sendToFeishu = async (ctx, webhook, payload, log) => {
+  const timeout = makeTimeoutSignal(resolveTimeoutMs(ctx));
   log('SendTextMessage:start', {
     webhook: redactWebhook(webhook),
     messageLength: payload.content.text.length,
@@ -120,34 +133,49 @@ const sendToFeishu = async (ctx, webhook, payload, log) => {
       method: 'POST',
       headers: buildHeaders(ctx),
       body: JSON.stringify(payload),
-      timeoutMs: resolveTimeoutMs(ctx),
+      signal: timeout.signal,
       ...buildTlsOptions(ctx.bindings || {}),
     });
   } catch (err) {
     const reason = err?.cause?.message || err?.message || 'fetch failed';
     throw errorWithCode('UNAVAILABLE', reason);
+  } finally {
+    timeout.clear();
   }
 
   const httpStatus = Number(res.status || 0);
-  const httpBody = String((await res.text()) ?? '');
+  let httpBody;
+  try {
+    httpBody = String((await res.text()) ?? '');
+  } catch (err) {
+    const error = errorWithCode('UNAVAILABLE', err?.message || 'read response failed');
+    error.httpStatus = httpStatus;
+    error.httpBody = '';
+    error.httpBodyLength = 0;
+    throw error;
+  }
   log('SendTextMessage:response', {
     httpStatus,
     httpBodyLength: httpBody.length,
   });
 
   if (!SUCCESS_STATUS_CODES.has(httpStatus)) {
-    throw errorWithCode('UNAVAILABLE', `upstream http ${httpStatus}: ${httpBody}`);
+    const err = errorWithCode('UNAVAILABLE', `upstream http ${httpStatus}`);
+    err.httpStatus = httpStatus;
+    err.httpBody = '';
+    err.httpBodyLength = httpBody.length;
+    throw err;
   }
 
   return {
     http_status: httpStatus,
-    http_body: httpBody,
+    http_body: '',
   };
 };
 
 const handleSendTextMessage = async (req, ctx) => {
   const callCtx = resolveCallContext(ctx);
-  const webhook = normalizeWebhook(resolveBindingString(callCtx.bindings, ['webhook', 'webhook_url', 'webhookUrl', 'url']));
+  const webhook = normalizeWebhook(resolveWebhook(callCtx));
   if (!webhook) {
     throw errorWithCode('INVALID_ARGUMENT', 'webhook is required (https://open.feishu.cn/open-apis/bot/v2/hook/{token})');
   }
@@ -187,10 +215,13 @@ rpcdef.__test__ = {
   firstDefined,
   hasOwn,
   handleSendTextMessage,
+  insecureTlsDispatcher,
+  makeTimeoutSignal,
   mergedBindings,
   normalizeWebhook,
   redactWebhook,
   registerHandlers,
+  resolveWebhook,
   resolveBindingString,
   resolveCallContext,
   resolveTimeoutMs,

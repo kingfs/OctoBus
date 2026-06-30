@@ -6,6 +6,8 @@ const METHOD_SEARCH_FULL = 'qianxin.hunter.v1.HunterService/Search';
 
 const buildCtx = (req = {}, overrides = {}) => ({
   bindings: { baseUrl: 'http://localhost:18081', ...overrides.bindings },
+  config: overrides.config || {},
+  secret: overrides.secret === undefined ? { apiKey: 'test-key' } : overrides.secret,
   limits: { timeoutMs: 10_000, ...overrides.limits },
   meta: { instance_id: 'inst', request_id: 'req', ...overrides.meta },
   req,
@@ -61,7 +63,7 @@ test('internal helpers normalize inputs', async () => {
   assert.equal(mapped.domain, 'example.com');
   assert.equal(mapped.web_title, 'Example');
   assert.equal(mapped.protocol, 'https');
-  assert.equal(typeof mapped.raw_json, 'string');
+  assert.equal(mapped.raw_json, '');
 
   const empty = _test.mapSearchResult(null);
   assert.equal(empty.ip, '');
@@ -83,21 +85,19 @@ test('Search requires query parameter', async () => {
 });
 
 test('Search requires api_key', async () => {
-  const handler = await loadHandler({ query: 'ip="1.1.1.1"' });
-  await assert.rejects(() => handler(), /INVALID_ARGUMENT: api_key is required/);
+  const handler = await loadHandler({ query: 'ip="1.1.1.1"' }, { secret: {} });
+  await assert.rejects(() => handler(), /INVALID_ARGUMENT: apiKey is required in secret/);
 });
 
 test('Search validates page', async () => {
   const badPage = await loadHandler({
     query: 'ip="1.1.1.1"',
-    api_key: 'test-key',
     page: 0,
   });
   await assert.rejects(() => badPage(), /INVALID_ARGUMENT: page must be an integer/);
 
   const badPageStr = await loadHandler({
     query: 'ip="1.1.1.1"',
-    api_key: 'test-key',
     page: 'abc',
   });
   await assert.rejects(() => badPageStr(), /INVALID_ARGUMENT: page must be an integer/);
@@ -106,14 +106,12 @@ test('Search validates page', async () => {
 test('Search validates page_size', async () => {
   const badSize = await loadHandler({
     query: 'ip="1.1.1.1"',
-    api_key: 'test-key',
     page_size: 5,
   });
   await assert.rejects(() => badSize(), /INVALID_ARGUMENT: page_size must be one of/);
 
   const badSizeNum = await loadHandler({
     query: 'ip="1.1.1.1"',
-    api_key: 'test-key',
     page_size: 200,
   });
   await assert.rejects(() => badSizeNum(), /INVALID_ARGUMENT: page_size must be one of/);
@@ -122,7 +120,6 @@ test('Search validates page_size', async () => {
 test('Search validates is_web', async () => {
   const badIsWeb = await loadHandler({
     query: 'ip="1.1.1.1"',
-    api_key: 'test-key',
     is_web: 5,
   });
   await assert.rejects(() => badIsWeb(), /INVALID_ARGUMENT: is_web must be 1/);
@@ -130,7 +127,7 @@ test('Search validates is_web', async () => {
 
 test('Search validates baseUrl', async () => {
   const handler = await loadHandler(
-    { query: 'ip="1.1.1.1"', api_key: 'test-key' },
+    { query: 'ip="1.1.1.1"' },
     { bindings: { baseUrl: 'bad-url' } }
   );
   await assert.rejects(() => handler(), /baseUrl must be a valid/);
@@ -164,7 +161,6 @@ test('Search sends correct request and maps response', async () => {
 
   const handler = await loadHandler({
     query: 'ip="1.1.1.1"',
-    api_key: 'test-key',
     page: 1,
     page_size: 10,
   });
@@ -201,12 +197,6 @@ test('Search uses secret.apiKey when request has no api_key', async () => {
     };
   });
 
-  const handler = await loadHandler(
-    { query: 'domain="example.com"' },
-    { bindings: { baseUrl: 'http://localhost:18081' }, secret: { apiKey: 'secret-from-config' } }
-  );
-
-  // Need to re-load with secret in ctx
   const { rpcdef } = await import('../src/hunter.js');
   const ctx = {
     config: {},
@@ -221,6 +211,57 @@ test('Search uses secret.apiKey when request has no api_key', async () => {
 
   assert.ok(captured.url.includes('api-key=secret-from-config'));
   assert.equal(res.results.length, 0);
+});
+
+test('Search ignores request api_key and prefers secret over deprecated config and bindings', async () => {
+  let captured;
+  setFetch(async (url, init) => {
+    captured = { url, init };
+    return {
+      ok: true,
+      status: 200,
+      headers: new Map([['content-type', 'application/json']]),
+      text: async () => JSON.stringify({ code: 200, message: 'ok', data: { list: [], total: 0 } }),
+    };
+  });
+
+  const handler = await loadHandler(
+    { query: 'domain="example.com"', api_key: 'request-key' },
+    {
+      bindings: { baseUrl: 'http://legacy.local', apiKey: 'legacy-binding-key' },
+      config: { baseUrl: 'http://config.local', apiKey: 'deprecated-config-key' },
+      secret: { apiKey: 'secret-key' },
+    }
+  );
+
+  await handler();
+  assert.ok(captured.url.startsWith('http://config.local/openApi/search?'));
+  assert.ok(captured.url.includes('api-key=secret-key'));
+  assert.ok(!captured.url.includes('request-key'));
+});
+
+test('Search keeps deprecated config apiKey as lower-priority fallback', async () => {
+  let captured;
+  setFetch(async (url, init) => {
+    captured = { url, init };
+    return {
+      ok: true,
+      status: 200,
+      headers: new Map([['content-type', 'application/json']]),
+      text: async () => JSON.stringify({ code: 200, message: 'ok', data: { list: [], total: 0 } }),
+    };
+  });
+
+  const handler = await loadHandler(
+    { query: 'domain="example.com"' },
+    {
+      config: { apiKey: 'deprecated-config-key' },
+      secret: {},
+    }
+  );
+
+  await handler();
+  assert.ok(captured.url.includes('api-key=deprecated-config-key'));
 });
 
 test('Search passes all optional parameters', async () => {
@@ -241,7 +282,6 @@ test('Search passes all optional parameters', async () => {
 
   const handler = await loadHandler({
     query: 'ip="1.1.1.1"',
-    api_key: 'test-key',
     page: 2,
     page_size: 50,
     is_web: 1,
@@ -279,7 +319,6 @@ test('Search handles page_size wrapper object', async () => {
 
   const handler = await loadHandler({
     query: 'ip="1.1.1.1"',
-    api_key: 'test-key',
     page: { value: 3 },
     page_size: { value: 100 },
     is_web: { value: 2 },
@@ -301,7 +340,7 @@ test('Search maps upstream 401 to UNAUTHENTICATED', async () => {
     text: async () => JSON.stringify({ code: 401, message: 'invalid api key' }),
   }));
 
-  const handler = await loadHandler({ query: 'ip="1.1.1.1"', api_key: 'bad-key' });
+  const handler = await loadHandler({ query: 'ip="1.1.1.1"' }, { secret: { apiKey: 'bad-key' } });
   await assert.rejects(() => handler(), /UNAUTHENTICATED: upstream http 401/);
 });
 
@@ -313,7 +352,7 @@ test('Search maps upstream 403 to PERMISSION_DENIED', async () => {
     text: async () => JSON.stringify({ code: 403, message: 'forbidden' }),
   }));
 
-  const handler = await loadHandler({ query: 'ip="1.1.1.1"', api_key: 'test-key' });
+  const handler = await loadHandler({ query: 'ip="1.1.1.1"' });
   await assert.rejects(() => handler(), /PERMISSION_DENIED: upstream http 403/);
 });
 
@@ -325,7 +364,7 @@ test('Search maps upstream 500 to UNAVAILABLE', async () => {
     text: async () => 'internal server error',
   }));
 
-  const handler = await loadHandler({ query: 'ip="1.1.1.1"', api_key: 'test-key' });
+  const handler = await loadHandler({ query: 'ip="1.1.1.1"' });
   await assert.rejects(() => handler(), /UNAVAILABLE: upstream http 500/);
 });
 
@@ -334,7 +373,7 @@ test('Search maps network failure to UNAVAILABLE', async () => {
     throw new Error('network down');
   });
 
-  const handler = await loadHandler({ query: 'ip="1.1.1.1"', api_key: 'test-key' });
+  const handler = await loadHandler({ query: 'ip="1.1.1.1"' });
   await assert.rejects(() => handler(), /UNAVAILABLE: network down/);
 });
 
@@ -343,7 +382,7 @@ test('Search maps network failure with cause', async () => {
     throw Object.assign(new Error('fetch error'), { cause: new Error('connection reset') });
   });
 
-  const handler = await loadHandler({ query: 'ip="1.1.1.1"', api_key: 'test-key' });
+  const handler = await loadHandler({ query: 'ip="1.1.1.1"' });
   await assert.rejects(() => handler(), /UNAVAILABLE: connection reset/);
 });
 
@@ -355,7 +394,7 @@ test('Search maps non-JSON response to UNKNOWN', async () => {
     text: async () => 'not json',
   }));
 
-  const handler = await loadHandler({ query: 'ip="1.1.1.1"', api_key: 'test-key' });
+  const handler = await loadHandler({ query: 'ip="1.1.1.1"' });
   await assert.rejects(() => handler(), /UNKNOWN: upstream response is not valid JSON/);
 });
 
@@ -367,7 +406,7 @@ test('Search handles upstream business error (code != 200)', async () => {
     text: async () => JSON.stringify({ code: 429, message: 'rate limited' }),
   }));
 
-  const handler = await loadHandler({ query: 'ip="1.1.1.1"', api_key: 'test-key' });
+  const handler = await loadHandler({ query: 'ip="1.1.1.1"' });
   const res = await handler();
 
   assert.equal(res.results.length, 0);
@@ -383,7 +422,7 @@ test('Search handles empty response body', async () => {
     text: async () => '',
   }));
 
-  const handler = await loadHandler({ query: 'ip="1.1.1.1"', api_key: 'test-key' });
+  const handler = await loadHandler({ query: 'ip="1.1.1.1"' });
   const res = await handler();
 
   assert.equal(res.results.length, 0);
@@ -401,7 +440,7 @@ test('Search handles response without data wrapper', async () => {
     ]),
   }));
 
-  const handler = await loadHandler({ query: 'ip="1.1.1.1"', api_key: 'test-key' });
+  const handler = await loadHandler({ query: 'ip="1.1.1.1"' });
   const res = await handler();
 
   assert.equal(res.results.length, 2);
@@ -421,7 +460,7 @@ test('Search handles data.arr format', async () => {
     }),
   }));
 
-  const handler = await loadHandler({ query: 'ip="5.5.5.5"', api_key: 'test-key' });
+  const handler = await loadHandler({ query: 'ip="5.5.5.5"' });
   const res = await handler();
   assert.equal(res.results.length, 1);
   assert.equal(res.results[0].ip, '5.5.5.5');
@@ -437,7 +476,7 @@ test('Search handles response read failure', async () => {
     text: async () => { throw new Error('stream error'); },
   }));
 
-  const handler = await loadHandler({ query: 'ip="1.1.1.1"', api_key: 'test-key' });
+  const handler = await loadHandler({ query: 'ip="1.1.1.1"' });
   await assert.rejects(() => handler(), /UNAVAILABLE: failed to read response/);
 });
 
@@ -451,7 +490,7 @@ test('Search maps upstream 400 to INVALID_ARGUMENT', async () => {
     text: async () => JSON.stringify({ code: 400, message: 'bad request' }),
   }));
 
-  const handler = await loadHandler({ query: 'ip="1.1.1.1"', api_key: 'test-key' });
+  const handler = await loadHandler({ query: 'ip="1.1.1.1"' });
   await assert.rejects(() => handler(), /INVALID_ARGUMENT: upstream http 400/);
 });
 
@@ -470,12 +509,15 @@ test('Search passes skipTlsVerify', async () => {
   });
 
   const handler = await loadHandler(
-    { query: 'ip="1.1.1.1"', api_key: 'test-key' },
+    { query: 'ip="1.1.1.1"' },
     { bindings: { baseUrl: 'http://localhost:18081', skipTlsVerify: true } }
   );
 
   await handler();
-  assert.equal(captured.init.insecureSkipVerify, true);
+  assert.ok(captured.init.signal instanceof AbortSignal);
+  assert.equal('timeoutMs' in captured.init, false);
+  assert.ok(captured.init.dispatcher);
+  assert.equal('insecureSkipVerify' in captured.init, false);
 });
 
 // ---- SDK handler ----
@@ -565,5 +607,5 @@ test('mapSearchResult handles JSON.stringify failure', async () => {
   const obj = { a: 1 };
   obj.self = obj;
   const result = _test.mapSearchResult(obj);
-  assert.equal(result.raw_json, '{}');
+  assert.equal(result.raw_json, '');
 });

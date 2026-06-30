@@ -17,6 +17,10 @@ const services = {
     entryFile: "../chaitin__safeline-waf-eliminate-false-positive/bin/safeline-waf-eliminate-false-positive.js",
     serviceModule: "../chaitin__safeline-waf-eliminate-false-positive/src/service.js",
   },
+  "cloudatlas": {
+    entryFile: "../chaitin__cloudatlas/bin/cloudatlas.js",
+    serviceModule: "../chaitin__cloudatlas/src/service.js",
+  },
   "das-gateway-v3": {
     entryFile: "../das__gateway_v3/bin/das-gateway-v3.js",
     serviceModule: "../das__gateway_v3/src/service.js",
@@ -52,6 +56,10 @@ const services = {
   "feishu-group-robot": {
     entryFile: "../feishu__group-robot/bin/feishu-group-robot.js",
     serviceModule: "../feishu__group-robot/src/service.js",
+  },
+  "first-epss-v1": {
+    entryFile: "../first__epss-v1/bin/first-epss-v1.js",
+    serviceModule: "../first__epss-v1/src/service.js",
   },
   "fortinet-fw": {
     entryFile: "../fortinet__fw/bin/fortinet-fw.js",
@@ -101,6 +109,10 @@ const services = {
     entryFile: "../qianxin__fw-secgate3600-http-x/bin/qianxin-fw-secgate3600-http-x.js",
     serviceModule: "../qianxin__fw-secgate3600-http-x/src/service.js",
   },
+  "qianxin-hunter": {
+    entryFile: "../qianxin__hunter_v23-1/bin/qianxin-hunter.js",
+    serviceModule: "../qianxin__hunter_v23-1/src/service.js",
+  },
   "qiming-tianqing-waf": {
     entryFile: "../qiming-tianqing__waf/bin/qiming-tianqing-waf.js",
     serviceModule: "../qiming-tianqing__waf/src/service.js",
@@ -148,6 +160,10 @@ const services = {
   "threatbook-claudsandbox-v3": {
     entryFile: "../threatbook__claudsandbox_v3/bin/threatbook-claudsandbox-v3.js",
     serviceModule: "../threatbook__claudsandbox_v3/src/service.js",
+  },
+  "threatbook-ngtip-v5": {
+    entryFile: "../threatbook__ngtip_v5/bin/threatbook-ngtip-v5.js",
+    serviceModule: "../threatbook__ngtip_v5/src/service.js",
   },
   "threatbook-onesig": {
     entryFile: "../threatbook__onesig/bin/threatbook-onesig.js",

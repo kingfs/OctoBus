@@ -74,9 +74,23 @@ const resolveBindingString = (bindings, keys) => {
 
 const mergedBindings = (ctx = {}) => ({
   ...(ctx?.config ?? {}),
-  ...(ctx?.secret ?? {}),
   ...(ctx?.bindings ?? {}),
+  ...(ctx?.secret ?? {}),
 });
+
+const resolveWebhookUrl = (ctx = {}) => {
+  const keys = ['webhook_url', 'webhookUrl', 'webhook', 'url'];
+  return resolveBindingString(ctx.secret || {}, keys)
+    || resolveBindingString(ctx.config || {}, keys)
+    || resolveBindingString(ctx.bindings || {}, keys);
+};
+
+const resolveSigningSecret = (ctx = {}) => {
+  const keys = ['secret', 'dingding_secret'];
+  return resolveBindingString(ctx.secret || {}, keys)
+    || resolveBindingString(ctx.config || {}, keys)
+    || resolveBindingString(ctx.bindings || {}, keys);
+};
 
 const resolveCallContext = (ctx = {}) => ({
   ...ctx,
@@ -90,6 +104,21 @@ const resolveTimeoutMs = (ctx) => {
   const bindings = mergedBindings(ctx);
   const raw = Number(firstDefined(bindings.timeoutMs, bindings.timeout_ms, ctx?.limits?.timeoutMs, DEFAULT_TIMEOUT_MS));
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_TIMEOUT_MS;
+};
+
+const tlsSkipRequested = (bindings = {}) => (
+  toBoolean(firstDefined(bindings.skipTlsVerify, bindings.tlsInsecureSkipVerify, bindings.insecureSkipVerify))
+);
+
+const assertSupportedTlsConfig = (bindings = {}) => {
+  if (!tlsSkipRequested(bindings)) return;
+  throw errorWithCode('INVALID_ARGUMENT', 'skipTlsVerify is not supported by this service');
+};
+
+const makeTimeoutSignal = (timeoutMs) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  return { signal: controller.signal, clear: () => clearTimeout(timeoutId) };
 };
 
 const encodeUtf8 = (value) => new TextEncoder().encode(String(value ?? ''));
@@ -132,7 +161,9 @@ const buildDingDingPayload = (sendMsg, isAtAll, atMobiles, atUserIds) => ({
   },
 });
 
-const redactWebhookUrl = (url) => String(url).replace(/access_token=[^&]+/, 'access_token=***');
+const redactWebhookUrl = (url) => String(url)
+  .replace(/access_token=[^&]+/, 'access_token=***')
+  .replace(/sign=[^&]+/, 'sign=***');
 
 const buildSignedWebhookUrl = (webhookUrl, secret, now = Date.now) => {
   if (!secret) return webhookUrl;
@@ -143,9 +174,11 @@ const buildSignedWebhookUrl = (webhookUrl, secret, now = Date.now) => {
 };
 
 const sendToDingTalk = async (config, log) => {
-  const { webhookUrl, secret, payload, timeoutMs, now } = config;
+  const { webhookUrl, secret, payload, timeoutMs, now, bindings } = config;
+  assertSupportedTlsConfig(bindings);
   const fullUrl = buildSignedWebhookUrl(webhookUrl, secret, now);
   const bodyString = JSON.stringify(payload);
+  const timeout = makeTimeoutSignal(timeoutMs);
 
   log('request', {
     url: redactWebhookUrl(fullUrl),
@@ -162,7 +195,7 @@ const sendToDingTalk = async (config, log) => {
       method: 'POST',
       headers: JSON_HEADERS,
       body: bodyString,
-      timeoutMs,
+      signal: timeout.signal,
     });
   } catch (err) {
     const reason = err?.cause?.message || err?.message || 'fetch failed';
@@ -172,10 +205,23 @@ const sendToDingTalk = async (config, log) => {
       httpBody: '',
       error: errorWithCode('UNAVAILABLE', reason),
     };
+  } finally {
+    timeout.clear();
   }
 
   const httpStatus = Number(res.status || 0);
-  const httpBody = String((await res.text()) ?? '');
+  let httpBody;
+  try {
+    httpBody = String((await res.text()) ?? '');
+  } catch (err) {
+    const reason = err?.message || 'read response failed';
+    log('failure', { reason, stage: 'read', httpStatus });
+    return {
+      httpStatus,
+      httpBody: '',
+      error: errorWithCode('UNAVAILABLE', reason),
+    };
+  }
   log('response', {
     httpStatus,
     httpBodyLength: httpBody.length,
@@ -190,18 +236,17 @@ const sendToDingTalk = async (config, log) => {
 
 const handleSendTextMessage = async (req, ctx) => {
   const callCtx = resolveCallContext(ctx);
-  const bindings = callCtx.bindings || {};
   const log = createLogger(callCtx.meta);
 
-  const webhookUrl = resolveBindingString(bindings, ['webhook_url', 'webhookUrl', 'webhook', 'url']);
+  const webhookUrl = resolveWebhookUrl(callCtx);
   if (!webhookUrl) {
-    throw errorWithCode('INVALID_ARGUMENT', 'webhook_url is required in bindings');
+    throw errorWithCode('INVALID_ARGUMENT', 'webhook_url is required in instance secret');
   }
   if (!/^https?:\/\//i.test(webhookUrl)) {
     throw errorWithCode('INVALID_ARGUMENT', 'webhook_url must be a valid HTTP/HTTPS URL');
   }
 
-  const secret = resolveBindingString(bindings, ['secret', 'dingding_secret']);
+  const secret = resolveSigningSecret(callCtx);
   const sendMsg = coerceString(firstDefined(req?.send_msg, req?.sendMsg, req?.send_message, req?.sendMessage));
   if (!sendMsg.trim()) {
     throw errorWithCode('INVALID_ARGUMENT', 'send_msg is required and must not be empty');
@@ -218,6 +263,7 @@ const handleSendTextMessage = async (req, ctx) => {
       secret,
       payload,
       timeoutMs: resolveTimeoutMs(callCtx),
+      bindings: callCtx.bindings,
     },
     log,
   );
@@ -228,13 +274,14 @@ const handleSendTextMessage = async (req, ctx) => {
     const errorMessage = result.error?.message || `HTTP ${result.httpStatus}`;
     const err = errorWithCode(errorCode, errorMessage);
     err.httpStatus = result.httpStatus;
-    err.httpBody = result.httpBody;
+    err.httpBody = '';
+    err.httpBodyLength = String(result.httpBody ?? '').length;
     throw err;
   }
 
   return {
     http_status: result.httpStatus,
-    http_body: result.httpBody,
+    http_body: '',
   };
 };
 
@@ -256,6 +303,7 @@ export const handlers = {
 };
 
 rpcdef.__test__ = {
+  assertSupportedTlsConfig,
   buildDingDingPayload,
   buildSignedWebhookUrl,
   coerceString,
@@ -267,14 +315,18 @@ rpcdef.__test__ = {
   hasOwn,
   handleSendTextMessage,
   hmacSha256,
+  makeTimeoutSignal,
   mergedBindings,
   readRepeatedStrings,
   redactWebhookUrl,
   registerHandlers,
   resolveBindingString,
   resolveCallContext,
+  resolveSigningSecret,
   resolveTimeoutMs,
+  resolveWebhookUrl,
   sendToDingTalk,
+  tlsSkipRequested,
   toBase64,
   toBoolean,
   urlEncode,

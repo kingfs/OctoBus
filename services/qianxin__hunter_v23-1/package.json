@@ -4,9 +4,10 @@
   "private": true,
   "type": "module",
   "bin": {
-    "qianxin-hunter": "bin/hunter.js"
+    "qianxin-hunter": "bin/qianxin-hunter.js"
   },
   "dependencies": {
-    "@chaitin-ai/octobus-sdk": "^0.5.0"
+    "@chaitin-ai/octobus-sdk": "^0.5.0",
+    "undici": "^7.16.0"
   }
 }

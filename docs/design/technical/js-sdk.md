@@ -220,7 +220,11 @@ package root 或 `--workdir` 查找。
 - `client-stub.ts`：从 loaded service package 生成 Connect/gRPC wrapper source。
 - `client-package.ts`：生成 descriptor-backed npm client package，并处理 bundle/publish。
 - `connect-stub.ts`：Connect RPC client runtime。
+- `context.ts`：规范化 handler context，并提供 config/secret 合并和 metadata 读取 helper。
+- `errors.ts`：提供 gRPC status helper、HTTP status 映射和敏感信息脱敏辅助。
 - `grpc-stub.ts`：gRPC client runtime 和 streaming adapter。
+- `http.ts`：提供真实 timeout、per-request TLS dispatcher、response text/JSON 安全读取和 HTTP
+  response helper。
 - `protobuf-json.ts`：service CLI JSON Schema 和 ProtoJSON 输出。
 
 模块之间的依赖关系以 descriptor 为中心：
