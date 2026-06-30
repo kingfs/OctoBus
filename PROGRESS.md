@@ -15,13 +15,13 @@
 
 ## 执行规则
 
-- [ ] 每个任务完成时必须同时完成对应测试方案和验收标准。
-- [ ] 不跨阶段提前合并依赖未满足的功能；阶段 2 后项目必须保持 services 可验证。
-- [ ] 不修改 proto、schema、service name、bin、handler key、runtime mode 或上游业务字段。
-- [ ] 不提交 `services/package-lock.json`、`node_modules/`、pack artifact、日志、coverage、`.env` 或 secret。
-- [ ] helper 迁移只做语义等价或已由测试覆盖的变更；遇到错误码、message、details 或 payload shape 差异时停止扩大批次。
-- [ ] 每个任务合并前至少运行该任务要求的最小测试；阶段性收口时运行 harness 定义的完整门禁。
-- [ ] 每个任务完成后必须按 `状态`、`变更`、`验证`、`审计与例外`、`下一目标` 更新完成总结。
+- [x] 每个任务完成时必须同时完成对应测试方案和验收标准。
+- [x] 不跨阶段提前合并依赖未满足的功能；阶段 2 后项目必须保持 services 可验证。
+- [x] 不修改 proto、schema、service name、bin、handler key、runtime mode 或上游业务字段。
+- [x] 不提交 `services/package-lock.json`、`node_modules/`、pack artifact、日志、coverage、`.env` 或 secret。
+- [x] helper 迁移只做语义等价或已由测试覆盖的变更；遇到错误码、message、details 或 payload shape 差异时停止扩大批次。
+- [x] 每个任务合并前至少运行该任务要求的最小测试；阶段性收口时运行 harness 定义的完整门禁。
+- [x] 每个任务完成后必须按 `状态`、`变更`、`验证`、`审计与例外`、`下一目标` 更新完成总结。
 
 ## 1. 基线确认和变更清单
 
@@ -518,17 +518,17 @@
       - 本地 `services/node_modules` 和 `bin/octobus` 仍作为 ignored 测试/构建输出保留，未进入待提交或 untracked 列表。
     - 下一目标：任务 7.2。
 
-- [ ] 7.2 运行仓库级 harness 门禁
+- [x] 7.2 运行仓库级 harness 门禁
   - 依赖：任务 7.1。
   - 工作内容：
     - 运行仓库级 lint/test/build。
     - 如果改动影响 package import、routing protocol、supervision、CLI 或 daemon startup，追加运行 e2e。
     - 如果 Go/e2e 失败且与本变更无关，记录证据，不混入无关修复；如果相关，修复后重跑。
   - 可并行子任务：
-    - [ ] 可并行：`task lint`。
-    - [ ] 可并行：`task test`。
-    - [ ] 可并行：`task build`。
-    - [ ] 可并行：条件 e2e。
+    - [x] 可并行：`task lint`。
+    - [x] 可并行：`task test`。
+    - [x] 可并行：`task build`。
+    - [x] 可并行：条件 e2e。
   - 测试方案：
     - `task lint`
     - `task test`
@@ -539,10 +539,25 @@
     - 条件触发时 e2e 通过，或完成总结中有明确未运行原因。
     - PR 摘要可列出 SDK dependency 升级、helper 迁移服务列表和实际运行门禁。
   - 完成总结：
-    - 状态：待完成。
-    - 变更：待完成。
-    - 验证：待完成。
-    - 审计与例外：待完成。
+    - 状态：已完成。仓库级 lint、test、build 和条件 e2e 均通过。
+    - 变更：
+      - 本任务未修改 Go、service 源码、SDK 源码、proto、schema、package 文件或测试脚本；仅记录最终仓库级门禁证据。
+      - 勾选全局执行规则，表示本次 `PROGRESS.md` 范围内任务均已按依赖、边界、测试和总结规则收口。
+    - 验证：
+      - `GOSUMDB=sum.golang.org task lint`：通过，包含 gofmt 待格式化检查和 `go vet ./...`。
+      - `GOSUMDB=sum.golang.org task test`：通过，包含 SDK build、example dependency smoke、Go unit/integration/e2e coverage、minimum 和 on-demand minimum 示例 smoke。
+      - `task test` coverage 输出：unit 87.4%、integration 62.1%、e2e 62.0%、total 89.4%。
+      - `GOSUMDB=sum.golang.org task build`：通过，生成 `bin/octobus` 并通过静态链接检查。
+      - `GOSUMDB=sum.golang.org go test ./tests/e2e -count=1`：通过，输出 `ok octobus/tests/e2e 64.244s`。
+      - `test -x bin/octobus && file bin/octobus`：确认 `bin/octobus` 为可执行的静态链接 Linux ELF。
+      - `git status --short`：仓库级门禁后无 tracked 变更。
+      - `git ls-files --others --exclude-standard`：无输出。
+      - `find services -maxdepth 2 \( -name '*.tgz' -o -name '*.tar.gz' -o -name '*.zip' -o -name '*.log' -o -name '.env' -o -name 'coverage' -o -name 'package-lock.json' \) -print | sort`：无输出。
+    - 审计与例外：
+      - 使用命令级 `GOSUMDB=sum.golang.org` 是本地 Go 工具链校验例外；默认环境 `GOSUMDB=off` 会阻止下载/校验 `go1.26.1` toolchain。代码和仓库配置未因该环境例外修改。
+      - `task test` 脚本本身未强制 AGENTS 中“overall coverage 至少 90%”的文字目标；本次实际输出 total coverage 为 89.4%，低于该文字目标但命令退出码为 0。该差异是现有 harness 口径问题，未在 services SDK 升级中混入无关 Go 覆盖率补测。
+      - `task test` 生成的 root `coverage/` 和 `.octobus/` 本地数据目录已清理；`bin/octobus`、SDK/example dependency build output 和 `services/node_modules` 均为 ignored 本地验证产物，未进入提交范围。
+      - 条件 e2e 已触发并通过，因为本次变更影响 service package/import 验证路径和 services SDK runtime dependency。
     - 下一目标：无。
 
 ## 首版不做的事项
