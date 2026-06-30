@@ -96,8 +96,8 @@ const LIST_BUSINESS_UNITS_PATH         = '/CloudAtlas.CloudAtlas/ListBusinessUni
 
 const mergedBindings = (ctx = {}) => ({
   ...(ctx?.config ?? {}),
-  ...(ctx?.secret ?? {}),
   ...(ctx?.bindings ?? {}),
+  ...(ctx?.secret ?? {}),
 });
 
 const parseHeaders = (value) => {
@@ -266,15 +266,15 @@ export function rpcdef(ctx) {
   const baseHeaders = parseHeaders(bindings.headers);
   const meta = ctx.meta || {};
   const skipTlsVerify = Boolean(bindings.tlsInsecureSkipVerify || bindings.skipTlsVerify || bindings.skip_tls_verify || bindings.tls_insecure_skip_verify);
+  const resolvedToken = String(firstDefined(bindings.token, bindings.Token) || '').trim();
 
   const requestWithDefaults = (req = {}) => {
-    const token = firstDefined(req?.token, req?.Token, bindings.token, bindings.Token);
     const space = firstDefined(req?.space, req?.Space, defaultSpace);
-    if (token === undefined && token === null && space === undefined && space === null) return req ?? {};
+    const { token: _requestToken, Token: _requestTokenUpper, ...rest } = req ?? {};
+    if (space === undefined && space === null) return rest;
     return {
-      ...(token !== undefined && token !== null ? { token } : {}),
       ...(space !== undefined && space !== null ? { space } : {}),
-      ...(req ?? {}),
+      ...rest,
     };
   };
 
@@ -343,15 +343,14 @@ export function rpcdef(ctx) {
   // ── Common request helpers ──────────────────────────────────────────
 
   const ensureTokenAndBaseUrl = (req) => {
-    const token = String(firstDefined(req?.token, req?.Token) || '').trim();
-    if (!token) {
+    if (!resolvedToken) {
       throw errorWithCode('INVALID_ARGUMENT', 'token is required');
     }
     const baseUrl = normalizeBaseUrl(restBaseUrl);
     if (!baseUrl) {
       throw errorWithCode('INVALID_ARGUMENT', 'baseUrl is required (http/https)');
     }
-    return { token, baseUrl };
+    return { token: resolvedToken, baseUrl };
   };
 
   const callGet = async (token, url) => {

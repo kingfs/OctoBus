@@ -117,6 +117,10 @@ test('coercion helpers cover edge cases', () => {
   assert.equal(_test.resolveTimeoutMs({ limits: { timeoutMs: 3000 } }), 3000);
   assert.equal(_test.resolveBindingString({ webhook_url: '', webhook: 'https://x' }, ['webhook_url', 'webhook']), 'https://x');
   assert.equal(_test.errorWithCode('NOT_A_CODE', 'unknown').code, grpcStatus.UNKNOWN);
+  assert.equal(_test.toBoolean('yes'), true);
+  assert.equal(_test.toBoolean('off'), false);
+  assert.equal(_test.toBoolean({ value: 'on' }), true);
+  assert.equal(_test.toBoolean('maybe'), false);
 });
 
 test('SendTextMessage returns OK on HTTP 200', async () => {

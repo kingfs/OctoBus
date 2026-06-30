@@ -395,14 +395,18 @@ export function rpcdef(ctx) {
   const baseHeaders = parseHeaders(bindings.headers);
   const meta = ctx.meta || {};
   const skipTlsVerify = Boolean(bindings.tlsInsecureSkipVerify || bindings.skipTlsVerify || bindings.skip_tls_verify || bindings.tls_insecure_skip_verify);
+  const resolvedApiToken = String(firstDefined(bindings.api_token, bindings.apiToken) || '').trim();
+
+  const requireApiToken = () => {
+    if (!resolvedApiToken) {
+      throw errorWithCode('INVALID_ARGUMENT', 'api_token is required');
+    }
+    return resolvedApiToken;
+  };
 
   const requestWithDefaults = (req = {}) => {
-    const token = firstDefined(bindings.api_token, bindings.apiToken);
-    if (token === undefined || token === null) return req ?? {};
-    return {
-      ...(req ?? {}),
-      api_token: token,
-    };
+    const { api_token: _apiTokenSnake, apiToken: _apiTokenCamel, ...rest } = req ?? {};
+    return rest;
   };
 
   const logFlow = (action, details) => {
@@ -466,10 +470,7 @@ export function rpcdef(ctx) {
 
   // req 已经在 JS 引擎中按 bindings.defaults/force 做了合并，这里保持读取 req 即可。
   const callAggregate = async (req) => {
-    const token = String(firstDefined(req?.api_token, req?.apiToken) || '').trim();
-    if (!token) {
-      throw errorWithCode('INVALID_ARGUMENT', 'api_token is required');
-    }
+    const token = requireApiToken();
 
     const rawInterval = firstDefined(req?.time_interval, req?.timeInterval);
     const intervalCandidate = rawInterval && typeof rawInterval === 'object' && !('value' in rawInterval) && Object.keys(rawInterval).length === 0 ? undefined : rawInterval;
@@ -513,10 +514,7 @@ export function rpcdef(ctx) {
 
   // 其余方法同样读取 req 中字段即可，bindings.force/defaults 将在引擎层合并。
   const callCreateIpGroup = async (req) => {
-    const token = String(firstDefined(req?.api_token, req?.apiToken) || '').trim();
-    if (!token) {
-      throw errorWithCode('INVALID_ARGUMENT', 'api_token is required');
-    }
+    const token = requireApiToken();
     const name = String(firstDefined(req?.name, req?.Name) || '').trim();
     if (!name) {
       throw errorWithCode('INVALID_ARGUMENT', 'name is required');
@@ -546,10 +544,7 @@ export function rpcdef(ctx) {
   };
 
   const callUpdateIpGroup = async (req) => {
-    const token = String(firstDefined(req?.api_token, req?.apiToken) || '').trim();
-    if (!token) {
-      throw errorWithCode('INVALID_ARGUMENT', 'api_token is required');
-    }
+    const token = requireApiToken();
     const baseUrl = normalizeBaseUrl(restBaseUrl);
     if (!baseUrl) {
       throw errorWithCode('INVALID_ARGUMENT', 'restBaseUrl/baseUrl is required (http/https)');
@@ -570,10 +565,7 @@ export function rpcdef(ctx) {
   };
 
   const callListIpGroups = async (req) => {
-    const token = String(firstDefined(req?.api_token, req?.apiToken) || '').trim();
-    if (!token) {
-      throw errorWithCode('INVALID_ARGUMENT', 'api_token is required');
-    }
+    const token = requireApiToken();
     const baseUrl = normalizeBaseUrl(restBaseUrl);
     if (!baseUrl) {
       throw errorWithCode('INVALID_ARGUMENT', 'restBaseUrl/baseUrl is required (http/https)');
@@ -675,10 +667,7 @@ export function rpcdef(ctx) {
   };
 
   const callDeleteIpGroup = async (req) => {
-    const token = String(firstDefined(req?.api_token, req?.apiToken) || '').trim();
-    if (!token) {
-      throw errorWithCode('INVALID_ARGUMENT', 'api_token is required');
-    }
+    const token = requireApiToken();
     const baseUrl = normalizeBaseUrl(restBaseUrl);
     if (!baseUrl) {
       throw errorWithCode('INVALID_ARGUMENT', 'restBaseUrl/baseUrl is required (http/https)');
@@ -729,10 +718,7 @@ export function rpcdef(ctx) {
 
 
   const callAddIpGroupItems = async (req) => {
-    const token = String(firstDefined(req?.api_token, req?.apiToken) || '').trim();
-    if (!token) {
-      throw errorWithCode('INVALID_ARGUMENT', 'api_token is required');
-    }
+    const token = requireApiToken();
     const baseUrl = normalizeBaseUrl(restBaseUrl);
     if (!baseUrl) {
       throw errorWithCode('INVALID_ARGUMENT', 'restBaseUrl/baseUrl is required (http/https)');
@@ -802,10 +788,7 @@ export function rpcdef(ctx) {
   };
 
   const callUpdateDetectorState = async (req) => {
-    const token = String(firstDefined(req?.api_token, req?.apiToken) || '').trim();
-    if (!token) {
-      throw errorWithCode('INVALID_ARGUMENT', 'api_token is required');
-    }
+    const token = requireApiToken();
     const baseUrl = normalizeBaseUrl(restBaseUrl);
     if (!baseUrl) {
       throw errorWithCode('INVALID_ARGUMENT', 'restBaseUrl/baseUrl is required (http/https)');
@@ -842,10 +825,7 @@ export function rpcdef(ctx) {
   };
 
   const callDeleteIpGroupItems = async (req) => {
-    const token = String(firstDefined(req?.api_token, req?.apiToken) || '').trim();
-    if (!token) {
-      throw errorWithCode('INVALID_ARGUMENT', 'api_token is required');
-    }
+    const token = requireApiToken();
     const baseUrl = normalizeBaseUrl(restBaseUrl);
     if (!baseUrl) {
       throw errorWithCode('INVALID_ARGUMENT', 'restBaseUrl/baseUrl is required (http/https)');
@@ -901,10 +881,7 @@ export function rpcdef(ctx) {
   };
 
   const callGetDetectorState = async (req) => {
-    const token = String(firstDefined(req?.api_token, req?.apiToken) || '').trim();
-    if (!token) {
-      throw errorWithCode('INVALID_ARGUMENT', 'api_token is required');
-    }
+    const token = requireApiToken();
     const baseUrl = normalizeBaseUrl(restBaseUrl);
     if (!baseUrl) {
       throw errorWithCode('INVALID_ARGUMENT', 'restBaseUrl/baseUrl is required (http/https)');
@@ -954,7 +931,6 @@ export function rpcdef(ctx) {
     // 按名称查找现有组
     try {
       const listRes = await callListIpGroups({
-        api_token: req?.api_token || req?.apiToken,
         name: [groupName]
       });
       // listRes.data 结构与 callListIpGroups 返回一致（data.items）
@@ -972,7 +948,6 @@ export function rpcdef(ctx) {
 
     // 未找到则创建
     const createPayload = {
-      api_token: req?.api_token || req?.apiToken,
       name: groupName,
       comment: String(firstDefined(req?.comment, req?.Comment) || ''),
       original: []
@@ -986,10 +961,7 @@ export function rpcdef(ctx) {
   };
 
   const callBlockIp = async (req) => {
-    const token = String(firstDefined(req?.api_token, req?.apiToken) || '').trim();
-    if (!token) {
-      throw errorWithCode('INVALID_ARGUMENT', 'api_token is required');
-    }
+    const token = requireApiToken();
     const targets = requireTargets(req, ['targets', 'Targets']);
     const baseUrl = normalizeBaseUrl(restBaseUrl);
     if (!baseUrl) {
@@ -1010,10 +982,7 @@ export function rpcdef(ctx) {
   };
 
   const callUnblockIp = async (req) => {
-    const token = String(firstDefined(req?.api_token, req?.apiToken) || '').trim();
-    if (!token) {
-      throw errorWithCode('INVALID_ARGUMENT', 'api_token is required');
-    }
+    const token = requireApiToken();
     const targets = requireTargets(req, ['targets', 'Targets']);
     const baseUrl = normalizeBaseUrl(restBaseUrl);
     if (!baseUrl) {

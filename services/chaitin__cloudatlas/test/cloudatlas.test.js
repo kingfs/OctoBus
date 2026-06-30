@@ -1497,15 +1497,15 @@ test('requestWithDefaults injects token and space from bindings', async () => {
   assert.match(captured.url, /space=5/);
 });
 
-test('requestWithDefaults: per-request token overrides binding token', async () => {
+test('requestWithDefaults ignores per-request token in favor of instance secret', async () => {
   let captured;
   globalThis.fetch = async (url, init) => {
     captured = { url, init };
     return okResponse(successListBody([], 0));
   };
 
-  await rpcdef(buildCtx({ req: { token: 'override-token' } }))[LIST_ENTERPRISE_SUBJECTS_PATH]();
-  assert.equal(captured.init.headers.TOKEN, 'override-token');
+  await rpcdef(buildCtx({ secret: { token: 'secret-token' }, req: { token: 'request-token' } }))[LIST_ENTERPRISE_SUBJECTS_PATH]();
+  assert.equal(captured.init.headers.TOKEN, 'secret-token');
 });
 
 // ── Alternative binding names test ──────────────────────────────────────

@@ -75,6 +75,11 @@ Deprecated request `api_token` / `apiToken` and deprecated config token fields a
 - Non-JSON success bodies map to `UNKNOWN`.
 - Timeout uses AbortController and `skipTlsVerify` uses a per-request dispatcher. Errors do not return the API token or complete upstream raw body.
 
+## Limitations
+
+- The SafeLine API token must come from instance `secret` or deprecated instance config fallback. Deprecated request token fields are ignored by the runtime and remain in proto only for legacy schema compatibility.
+- RPCs proxy SafeLine REST semantics directly; write calls are not idempotent unless the upstream endpoint treats the same payload as idempotent.
+
 ## OctoBus Example
 
 ```bash
