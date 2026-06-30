@@ -13,7 +13,7 @@ import {
   _test,
   handlers,
   rpcdef,
-} from '../src/qianxin-fw-secgate36003600-http-x.js';
+} from '../src/qianxin-fw-secgate3600-http-x.js';
 import { service } from '../src/service.js';
 import { createMockServer } from './mock_upstream.js';
 
