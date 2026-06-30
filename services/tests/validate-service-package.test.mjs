@@ -17,6 +17,9 @@ function writeJSON(filePath, value) {
 function writeText(filePath, value = "fixture\n") {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, value);
+  if (value.startsWith("#!")) {
+    fs.chmodSync(filePath, 0o755);
+  }
 }
 
 function fixture() {
@@ -107,6 +110,16 @@ test("validates a migrated external service package root", () => {
   const root = fixture();
   const result = validateRepository(root, { serviceDir: "chaitin__safeline-waf" });
   assert.deepEqual(result.errors, []);
+});
+
+test("requires executable root wrappers and service entries", () => {
+  const root = fixture();
+  fs.chmodSync(path.join(root, "bin", "safeline-waf.js"), 0o644);
+  fs.chmodSync(path.join(root, "chaitin__safeline-waf", "bin", "safeline-waf.js"), 0o644);
+
+  const errors = validateRepository(root, { serviceDir: "chaitin__safeline-waf" }).errors.join("\n");
+  assert.match(errors, /package\.json bin safeline-waf target "bin\/safeline-waf\.js" must be executable/);
+  assert.match(errors, /service entry "bin\/safeline-waf\.js" must be executable/);
 });
 
 test("allows numeric service package names", () => {

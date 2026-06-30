@@ -123,6 +123,19 @@ function validateExistingFile(errors, root, relativePath, label) {
   return normalized;
 }
 
+function validateExecutableFile(errors, root, relativePath, label) {
+  const normalized = validateExistingFile(errors, root, relativePath, label);
+  if (normalized == null) {
+    return null;
+  }
+  const fullPath = path.join(root, filepathFromPackagePath(normalized));
+  const stat = fs.statSync(fullPath);
+  if ((stat.mode & 0o111) === 0) {
+    errors.push(`${label} "${normalized}" must be executable`);
+  }
+  return normalized;
+}
+
 function validateExistingDirectory(errors, root, relativePath, label) {
   const normalized = validateRelativePackagePath(errors, relativePath, label);
   if (normalized == null) {
@@ -359,7 +372,7 @@ export function validateRepository(root, options = {}) {
     if (name !== "" && !SERVICE_NAME_RE.test(name)) {
       errors.push(`package.json bin key "${name}" must match ${SERVICE_NAME_RE}`);
     }
-    validateExistingFile(errors, root, target, `package.json bin ${name || "string"} target`);
+    validateExecutableFile(errors, root, target, `package.json bin ${name || "string"} target`);
   }
 
   for (const serviceDir of serviceDirs) {
@@ -388,7 +401,7 @@ export function validateRepository(root, options = {}) {
       const rootBinTarget = validateExistingFile(errors, root, binEntries.get(manifest.name), `package.json bin ${manifest.name} target`);
       if (rootBinTarget != null) {
         const serviceBinTarget = path.posix.join("bin", path.posix.basename(rootBinTarget));
-        validateExistingFile(errors, serviceRoot, serviceBinTarget, `${serviceDir} service entry`);
+        validateExecutableFile(errors, serviceRoot, serviceBinTarget, `${serviceDir} service entry`);
         validatePackageFiles(errors, pkg, serviceDir, manifest.name, rootBinTarget);
         validateRootWrapper(errors, root, serviceDir, manifest.name, rootBinTarget);
         validateDispatcherService(errors, dispatcher, serviceDir, manifest.name, rootBinTarget);
